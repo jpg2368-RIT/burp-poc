@@ -7,7 +7,15 @@ public class Extension implements BurpExtension {
     public void initialize(MontoyaApi api) {
         api.extension().setName("Burp Suite POC Extension");
         api.logging().logToOutput("Extension successfully loaded :)");
-        MyHttpHandler handler = new MyHttpHandler();
+
+        String hash = "";
+        if (api.persistence().preferences().stringKeys().contains("hash")) {
+            hash = api.persistence().preferences().getString("hash");
+        }
+
+        MyHttpHandler handler = new MyHttpHandler(hash);
         api.http().registerHttpHandler(handler);
+
+        api.extension().registerUnloadingHandler(new UnloadingHandler(api, handler));
     }
 }

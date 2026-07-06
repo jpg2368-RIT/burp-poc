@@ -9,8 +9,12 @@ import java.util.HexFormat;
 public class MyHttpHandler implements HttpHandler {
     private String hash = "";
 
-    public MyHttpHandler() {
+    public MyHttpHandler(String hashArg) {
+        this.hash = hashArg;
+    }
 
+    public String getHash() {
+        return hash;
     }
 
     @Override
