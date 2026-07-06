@@ -1,10 +1,11 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
-import burp.api.montoya.http.handler.*;
 
-public class Extension implements BurpExtension {
+public class MyExtension implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
+        MAPI.initialize(api);
+
         api.extension().setName("Burp Suite POC Extension");
         api.logging().logToOutput("Extension successfully loaded :)");
 
@@ -16,6 +17,6 @@ public class Extension implements BurpExtension {
         MyHttpHandler handler = new MyHttpHandler(hash);
         api.http().registerHttpHandler(handler);
 
-        api.extension().registerUnloadingHandler(new UnloadingHandler(api, handler));
+        api.extension().registerUnloadingHandler(new UnloadingHandler(handler));
     }
 }
