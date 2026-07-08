@@ -1,6 +1,8 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 
+import javax.swing.*;
+
 public class MyExtension implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
@@ -18,5 +20,10 @@ public class MyExtension implements BurpExtension {
         api.http().registerHttpHandler(handler);
 
         api.extension().registerUnloadingHandler(new UnloadingHandler(handler));
+
+        JPanel extPanel = new JPanel();
+        extPanel.add(new JLabel("Test"));
+
+        api.userInterface().registerSuiteTab("Burp POC Extension Tab", extPanel);
     }
 }
