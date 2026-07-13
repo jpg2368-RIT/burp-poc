@@ -3,9 +3,7 @@ import burp.api.montoya.MontoyaApi;
 
 import javax.swing.*;
 import java.awt.*;
-import java.lang.reflect.Array;
-import java.util.ArrayList;
-import java.util.List;
+
 
 public class MyExtension implements BurpExtension {
     @Override
@@ -26,45 +24,126 @@ public class MyExtension implements BurpExtension {
         api.extension().registerUnloadingHandler(new UnloadingHandler(handler));
 
         // make settings tab
-        JPanel extPanel = new JPanel();
-        extPanel.setLayout(new BoxLayout(extPanel, BoxLayout.Y_AXIS));
+        JPanel extPanel = new JPanel(new GridBagLayout());
+        extPanel.setBorder(BorderFactory.createEmptyBorder(12, 12, 12, 12));
 
-        List<MenuItem> menuItems = new ArrayList<>();
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.insets = new Insets(6, 6, 6, 6);
+        gbc.anchor = GridBagConstraints.NORTHWEST;
 
-        JComboBox<String> apiEndpointDropdown = new JComboBox<String>();
+        // section title
+        gbc.gridx = 0;
+        gbc.gridy = 0;
+        gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        JLabel sectionTitle = new JLabel("LLM Provider Configuration");
+        sectionTitle.setFont(sectionTitle.getFont().deriveFont(Font.BOLD, 14f));
+        extPanel.add(sectionTitle, gbc);
+
+        gbc.insets = new Insets(6, 6, 6, 6);
+        gbc.gridwidth = 1;
+
+        // api endpoint type
+        gbc.gridx = 0;
+        gbc.gridy = 1;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        JLabel typeLabel = new JLabel("Endpoint Type:");
+        typeLabel.setPreferredSize(new Dimension(120, 24));
+        extPanel.add(typeLabel, gbc);
+
+        JComboBox<String> apiEndpointDropdown = new JComboBox<>();
         String[] apiTypes = {
                 "OpenAI-Compatible",
-                "Burp AI",
-                "Anthropic",
-                "Claude CLI",
-                "Codex CLI",
-                "Copilot CLI",
-                "Gemini CLI",
-                "LMStudio",
-                "Nvidia NIM",
-                "Ollama",
-                "Opencode CLI",
-                "Perplexity"
+//                "Burp AI",
+//                "Anthropic",
+//                "Claude CLI",
+//                "Codex CLI",
+//                "Copilot CLI",
+//                "Gemini CLI",
+//                "LMStudio",
+//                "Nvidia NIM",
+//                "Ollama",
+//                "OpenCode CLI",
+//                "Perplexity"
         };
         for (String i : apiTypes) {
             apiEndpointDropdown.addItem(i);
         }
-        menuItems.add(new MenuItem("API Endpoint Type", apiEndpointDropdown));
-        menuItems.add(new MenuItem("API Endpoint", new JTextField("")));
-        menuItems.add(new MenuItem("API Key", new JTextField("")));
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        apiEndpointDropdown.setPreferredSize(new Dimension(300, 28));
+        extPanel.add(apiEndpointDropdown, gbc);
 
-        for (MenuItem menuItem : menuItems) {
-            JPanel row = new JPanel();
-            row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+        // api endpoint url
+        gbc.gridx = 0;
+        gbc.gridy = 2;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        JLabel endpointLabel = new JLabel("Endpoint URL:");
+        endpointLabel.setPreferredSize(new Dimension(120, 24));
+        extPanel.add(endpointLabel, gbc);
 
-            JLabel label = new JLabel(menuItem.label);
-            JComponent input = menuItem.input;
+        JTextField endpointField = new JTextField("");
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        endpointField.setPreferredSize(new Dimension(300, 28));
+        extPanel.add(endpointField, gbc);
 
-            row.add(label);
-            row.add(input);
+        // api key
+        gbc.gridx = 0;
+        gbc.gridy = 3;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        JLabel apiKeyLabel = new JLabel("API Key:");
+        apiKeyLabel.setPreferredSize(new Dimension(120, 24));
+        extPanel.add(apiKeyLabel, gbc);
 
-            extPanel.add(row);
+        JPasswordField apiKeyField = new JPasswordField("");
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        apiKeyField.setPreferredSize(new Dimension(300, 28));
+        extPanel.add(apiKeyField, gbc);
+
+        // spacer
+        gbc.gridx = 0;
+        gbc.gridy = 4;
+        gbc.gridwidth = 2;
+        gbc.weighty = 1.0;
+        extPanel.add(Box.createGlue(), gbc);
+
+        // save button row
+        gbc.gridy = 5;
+        gbc.weighty = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.SOUTHEAST;
+        JButton saveButton = new JButton("Save Settings");
+        extPanel.add(saveButton, gbc);
+
+        // load saved settings
+        if (api.persistence().preferences().stringKeys().contains("apiEndpointType")) {
+            apiEndpointDropdown.setSelectedItem(api.persistence().preferences().getString("apiEndpointType"));
         }
+        if (api.persistence().preferences().stringKeys().contains("apiEndpointUrl")) {
+            endpointField.setText(api.persistence().preferences().getString("apiEndpointUrl"));
+        }
+        if (api.persistence().preferences().stringKeys().contains("apiKey")) {
+            apiKeyField.setText(api.persistence().preferences().getString("apiKey"));
+        }
+
+        // save settings on button click
+        saveButton.addActionListener(e -> {
+            api.persistence().preferences().setString("apiEndpointType", (String) apiEndpointDropdown.getSelectedItem());
+            api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
+            api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
+            api.logging().logToOutput("Settings saved.");
+        });
+
         api.userInterface().registerSuiteTab("Settings POC", extPanel);
 
         // make chat tab
@@ -118,12 +197,3 @@ public class MyExtension implements BurpExtension {
     }
 }
 
-class MenuItem {
-    public String label;
-    public JComponent input;
-
-    public MenuItem(String labelText, JComponent inputComponent) {
-        this.label = labelText;
-        this.input = inputComponent;
-    }
-}
