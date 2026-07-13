@@ -3,6 +3,7 @@ import burp.api.montoya.MontoyaApi;
 
 import javax.swing.*;
 import java.awt.*;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -30,6 +31,25 @@ public class MyExtension implements BurpExtension {
 
         List<MenuItem> menuItems = new ArrayList<>();
 
+        JComboBox<String> apiEndpointDropdown = new JComboBox<String>();
+        String[] apiTypes = {
+                "OpenAI-Compatible",
+                "Burp AI",
+                "Anthropic",
+                "Claude CLI",
+                "Codex CLI",
+                "Copilot CLI",
+                "Gemini CLI",
+                "LMStudio",
+                "Nvidia NIM",
+                "Ollama",
+                "Opencode CLI",
+                "Perplexity"
+        };
+        for (String i : apiTypes) {
+            apiEndpointDropdown.addItem(i);
+        }
+        menuItems.add(new MenuItem("API Endpoint Type", apiEndpointDropdown));
         menuItems.add(new MenuItem("API Endpoint", new JTextField("")));
         menuItems.add(new MenuItem("API Key", new JTextField("")));
 
