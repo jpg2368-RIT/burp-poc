@@ -1,4 +1,3 @@
-import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.extension.ExtensionUnloadingHandler;
 
 public class UnloadingHandler implements ExtensionUnloadingHandler {

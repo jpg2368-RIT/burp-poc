@@ -55,20 +55,7 @@ public class MyExtension implements BurpExtension {
         extPanel.add(typeLabel, gbc);
 
         JComboBox<String> apiEndpointDropdown = new JComboBox<>();
-        String[] apiTypes = {
-                "OpenAI-Compatible",
-//                "Burp AI",
-//                "Anthropic",
-//                "Claude CLI",
-//                "Codex CLI",
-//                "Copilot CLI",
-//                "Gemini CLI",
-//                "LMStudio",
-//                "Nvidia NIM",
-//                "Ollama",
-//                "OpenCode CLI",
-//                "Perplexity"
-        };
+        String[] apiTypes = {"OpenAI-Compatible"};
         for (String i : apiTypes) {
             apiEndpointDropdown.addItem(i);
         }
@@ -110,15 +97,63 @@ public class MyExtension implements BurpExtension {
         apiKeyField.setPreferredSize(new Dimension(300, 28));
         extPanel.add(apiKeyField, gbc);
 
-        // spacer
+        // api testing section title
         gbc.gridx = 0;
         gbc.gridy = 4;
         gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.insets = new Insets(10, 0, 6, 0);
+        JLabel testingTitle = new JLabel("API Testing");
+        testingTitle.setFont(testingTitle.getFont().deriveFont(Font.BOLD, 14f));
+        extPanel.add(testingTitle, gbc);
+
+        gbc.insets = new Insets(6, 6, 6, 6);
+
+        // button row
+        gbc.gridx = 0;
+        gbc.gridy = 5;
+        gbc.gridwidth = 2;
+        gbc.weighty = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.WEST;
+        JPanel buttonRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        buttonRow.setOpaque(false);
+
+        JButton checkRateLimitButton = new JButton("Check Rate Limit");
+        buttonRow.add(checkRateLimitButton);
+        extPanel.add(buttonRow, gbc);
+
+        // result text area
+        gbc.gridx = 0;
+        gbc.gridy = 6;
+        gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
+        gbc.weighty = 0;
+        gbc.fill = GridBagConstraints.BOTH;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        JTextArea resultArea = new JTextArea(6, 40);
+        resultArea.setEditable(false);
+        resultArea.setLineWrap(true);
+        resultArea.setWrapStyleWord(true);
+        resultArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        JScrollPane resultScroll = new JScrollPane(resultArea);
+        resultScroll.setPreferredSize(new Dimension(0, 120));
+        extPanel.add(resultScroll, gbc);
+
+        // vertical spacer
+        gbc.gridx = 0;
+        gbc.gridy = 7;
+        gbc.gridwidth = 2;
         gbc.weighty = 1.0;
+        gbc.fill = GridBagConstraints.BOTH;
         extPanel.add(Box.createGlue(), gbc);
 
-        // save button row
-        gbc.gridy = 5;
+        // save button
+        gbc.gridx = 0;
+        gbc.gridy = 8;
+        gbc.gridwidth = 2;
         gbc.weighty = 0;
         gbc.fill = GridBagConstraints.NONE;
         gbc.anchor = GridBagConstraints.SOUTHEAST;
@@ -142,6 +177,62 @@ public class MyExtension implements BurpExtension {
             api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
             api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
             api.logging().logToOutput("Settings saved.");
+        });
+
+        // check rate limit on button click TODO: this isn't working on API end?
+        checkRateLimitButton.addActionListener(e -> {
+            String endpoint = endpointField.getText().strip();
+            String apiKey = new String(apiKeyField.getPassword()).strip();
+
+            if (endpoint.isEmpty() || apiKey.isEmpty()) {
+                resultArea.setText("Please fill in Endpoint URL and API Key first.");
+                return;
+            }
+
+            resultArea.setText("Checking rate limit...");
+            resultArea.repaint();
+
+            new Thread(() -> {
+                try {
+                    String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+                    burp.api.montoya.http.message.requests.HttpRequest request =
+                            burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/models")
+                                    .withMethod("GET")
+                                    .withHeader("Authorization", "Bearer " + apiKey);
+
+                    burp.api.montoya.http.message.responses.HttpResponse response = api.http().sendRequest(request).response();
+
+                    StringBuilder allHeaders = new StringBuilder();
+                    for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
+                        allHeaders.append(header.name()).append(": ").append(header.value()).append("\n");
+                    }
+                    api.logging().logToOutput("Rate limit check - HTTP " + response.statusCode() + "\nHeaders:\n" + allHeaders);
+
+                    String limit = null, remaining = null, reset = null;
+                    for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
+                        String name = header.name().toLowerCase();
+                        if (name.equals("x-ai-ratelimit-limit-ai-proxy-openai-compatible")) {
+                            limit = header.value();
+                        } else if (name.equals("x-ai-ratelimit-remaining-ai-proxy-openai-compatible")) {
+                            remaining = header.value();
+                        } else if (name.equals("x-ai-ratelimit-reset-ai-proxy-openai-compatible")) {
+                            reset = header.value();
+                        }
+                    }
+
+                    if (limit != null) {
+                        resultArea.setText("Rate Limit:     " + limit + "\n"
+                                + "Remaining:      " + remaining + "\n"
+                                + "Reset (sec):    " + reset);
+                    } else {
+                        resultArea.setText("HTTP " + response.statusCode() + " - No rate limit headers found.\n"
+                                + "All response headers logged to Output tab.");
+                    }
+                } catch (Exception ex) {
+                    resultArea.setText("Error: " + ex.getMessage());
+                }
+                resultArea.repaint();
+            }).start();
         });
 
         api.userInterface().registerSuiteTab("Settings POC", extPanel);
