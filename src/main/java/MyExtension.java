@@ -124,8 +124,10 @@ public class MyExtension implements BurpExtension {
 
         JButton checkRateLimitButton = new JButton("Check Rate Limit");
         JButton listModelsButton = new JButton("List Models");
+        JButton testChatButton = new JButton("Test Chat");
         buttonRow.add(checkRateLimitButton);
         buttonRow.add(listModelsButton);
+        buttonRow.add(testChatButton);
         extPanel.add(buttonRow, gbc);
 
         // result text area
@@ -253,6 +255,46 @@ public class MyExtension implements BurpExtension {
                         resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                     }
                     api.logging().logToOutput("List models - HTTP " + response.statusCode());
+                } catch (Exception ex) {
+                    resultArea.setText("Error: " + ex.getMessage());
+                }
+                resultArea.repaint();
+            }).start();
+        });
+
+        // test chat on button click
+        testChatButton.addActionListener(e -> {
+            String endpoint = endpointField.getText().strip();
+            String apiKey = new String(apiKeyField.getPassword()).strip();
+
+            if (endpoint.isEmpty() || apiKey.isEmpty()) {
+                resultArea.setText("Please fill in Endpoint URL and API Key first.");
+                return;
+            }
+
+            resultArea.setText("Sending test chat request...");
+            resultArea.repaint();
+
+            new Thread(() -> {
+                try {
+                    String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+                    String json = "{\"model\":\"qwen3:latest\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}";
+
+                    burp.api.montoya.http.message.requests.HttpRequest request =
+                            burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/chat/completions")
+                                    .withMethod("POST")
+                                    .withHeader("Authorization", "Bearer " + apiKey)
+                                    .withHeader("Content-Type", "application/json")
+                                    .withBody(json);
+
+                    HttpResponse response = api.http().sendRequest(request).response();
+
+                    if (response.statusCode() == 200) {
+                        resultArea.setText(response.bodyToString());
+                    } else {
+                        resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
+                    }
+                    api.logging().logToOutput("Test chat - HTTP " + response.statusCode());
                 } catch (Exception ex) {
                     resultArea.setText("Error: " + ex.getMessage());
                 }
