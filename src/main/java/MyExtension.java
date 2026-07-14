@@ -314,13 +314,30 @@ public class MyExtension implements BurpExtension {
         chatArea.setEditable(false);
         chatArea.setLineWrap(true);
         chatArea.setWrapStyleWord(true);
+        chatArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
 
         JScrollPane chatScroll = new JScrollPane(chatArea);
         chatScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
-        chatScroll.setPreferredSize(new Dimension(0, 600));
+        chatScroll.setPreferredSize(new Dimension(0, 0));
+        chatScroll.setMinimumSize(new Dimension(0, 100));
         chatScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
 
         chatTab.add(chatScroll);
+        chatTab.add(Box.createVerticalStrut(10));
+
+        // model selector row
+        JPanel modelRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        modelRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        modelRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
+
+        JLabel modelLabel = new JLabel("Model:");
+        JComboBox<String> modelDropdown = new JComboBox<>();
+        JButton refreshModelsButton = new JButton("Refresh");
+
+        modelRow.add(modelLabel);
+        modelRow.add(modelDropdown);
+        modelRow.add(refreshModelsButton);
+        chatTab.add(modelRow);
         chatTab.add(Box.createVerticalStrut(10));
 
         // input row
@@ -351,7 +368,13 @@ public class MyExtension implements BurpExtension {
 
         chatTab.add(inputParts);
 
+        // refresh models on button click
+        refreshModelsButton.addActionListener(e -> new Thread(() -> refreshModels(modelDropdown, api)).start());
+
         api.userInterface().registerSuiteTab("Chat POC", chatTab);
+
+        // autopopulate models on load
+        new Thread(() -> refreshModels(modelDropdown, api)).start();
     }
 
     private HttpResponse sendApiRequest(MontoyaApi api, String endpoint, String apiKey, String path) {
@@ -362,6 +385,47 @@ public class MyExtension implements BurpExtension {
                         .withHeader("Authorization", "Bearer " + apiKey);
 
         return api.http().sendRequest(request).response();
+    }
+
+    private void appendChatMessage(JTextArea chatArea, String message) {
+        chatArea.append(message + "\n");
+        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+    }
+
+    private void refreshModels(JComboBox<String> modelDropdown, MontoyaApi api) {
+        String endpoint = "";
+        String apiKey = "";
+        if (api.persistence().preferences().stringKeys().contains("apiEndpointUrl")) {
+            endpoint = api.persistence().preferences().getString("apiEndpointUrl");
+        }
+        if (api.persistence().preferences().stringKeys().contains("apiKey")) {
+            apiKey = api.persistence().preferences().getString("apiKey");
+        }
+
+        if (endpoint.isEmpty() || apiKey.isEmpty()) {
+            return;
+        }
+
+        try {
+            HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
+            if (response.statusCode() == 200) {
+                String body = response.bodyToString();
+                modelDropdown.removeAllItems();
+                int idx = 0;
+                while ((idx = body.indexOf("\"id\":\"", idx)) != -1) {
+                    int start = idx + 6;
+                    int end = body.indexOf("\"", start);
+                    if (end != -1) {
+                        modelDropdown.addItem(body.substring(start, end));
+                        idx = end + 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            api.logging().logToOutput("Failed to refresh models: " + ex.getMessage());
+        }
     }
 }
 
