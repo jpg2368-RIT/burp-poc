@@ -1,5 +1,6 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.http.message.responses.HttpResponse;
 
 import javax.swing.*;
 import java.awt.*;
@@ -122,7 +123,9 @@ public class MyExtension implements BurpExtension {
         buttonRow.setOpaque(false);
 
         JButton checkRateLimitButton = new JButton("Check Rate Limit");
+        JButton listModelsButton = new JButton("List Models");
         buttonRow.add(checkRateLimitButton);
+        buttonRow.add(listModelsButton);
         extPanel.add(buttonRow, gbc);
 
         // result text area
@@ -194,13 +197,7 @@ public class MyExtension implements BurpExtension {
 
             new Thread(() -> {
                 try {
-                    String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
-                    burp.api.montoya.http.message.requests.HttpRequest request =
-                            burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/models")
-                                    .withMethod("GET")
-                                    .withHeader("Authorization", "Bearer " + apiKey);
-
-                    burp.api.montoya.http.message.responses.HttpResponse response = api.http().sendRequest(request).response();
+                    HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
 
                     StringBuilder allHeaders = new StringBuilder();
                     for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
@@ -211,12 +208,10 @@ public class MyExtension implements BurpExtension {
                     String limit = null, remaining = null, reset = null;
                     for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
                         String name = header.name().toLowerCase();
-                        if (name.equals("x-ai-ratelimit-limit-ai-proxy-openai-compatible")) {
-                            limit = header.value();
-                        } else if (name.equals("x-ai-ratelimit-remaining-ai-proxy-openai-compatible")) {
-                            remaining = header.value();
-                        } else if (name.equals("x-ai-ratelimit-reset-ai-proxy-openai-compatible")) {
-                            reset = header.value();
+                        switch (name) {
+                            case "x-ai-ratelimit-limit-ai-proxy-openai-compatible" -> limit = header.value();
+                            case "x-ai-ratelimit-remaining-ai-proxy-openai-compatible" -> remaining = header.value();
+                            case "x-ai-ratelimit-reset-ai-proxy-openai-compatible" -> reset = header.value();
                         }
                     }
 
@@ -228,6 +223,36 @@ public class MyExtension implements BurpExtension {
                         resultArea.setText("HTTP " + response.statusCode() + " - No rate limit headers found.\n"
                                 + "All response headers logged to Output tab.");
                     }
+                } catch (Exception ex) {
+                    resultArea.setText("Error: " + ex.getMessage());
+                }
+                resultArea.repaint();
+            }).start();
+        });
+
+        // list models on button click
+        listModelsButton.addActionListener(e -> {
+            String endpoint = endpointField.getText().strip();
+            String apiKey = new String(apiKeyField.getPassword()).strip();
+
+            if (endpoint.isEmpty() || apiKey.isEmpty()) {
+                resultArea.setText("Please fill in Endpoint URL and API Key first.");
+                return;
+            }
+
+            resultArea.setText("Fetching models...");
+            resultArea.repaint();
+
+            new Thread(() -> {
+                try {
+                    HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
+
+                    if (response.statusCode() == 200) {
+                        resultArea.setText(response.bodyToString());
+                    } else {
+                        resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
+                    }
+                    api.logging().logToOutput("List models - HTTP " + response.statusCode());
                 } catch (Exception ex) {
                     resultArea.setText("Error: " + ex.getMessage());
                 }
@@ -285,6 +310,16 @@ public class MyExtension implements BurpExtension {
         chatTab.add(inputParts);
 
         api.userInterface().registerSuiteTab("Chat POC", chatTab);
+    }
+
+    private HttpResponse sendApiRequest(MontoyaApi api, String endpoint, String apiKey, String path) {
+        String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+        burp.api.montoya.http.message.requests.HttpRequest request =
+                burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + path)
+                        .withMethod("GET")
+                        .withHeader("Authorization", "Bearer " + apiKey);
+
+        return api.http().sendRequest(request).response();
     }
 }
 
