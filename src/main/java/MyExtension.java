@@ -1,5 +1,6 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import javax.swing.*;
@@ -419,6 +420,8 @@ public class MyExtension implements BurpExtension {
                         return;
                     }
 
+                    api.logging().logToOutput("Chat request body:\n" + requestBody);
+
                     try {
                         String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
                         burp.api.montoya.http.message.requests.HttpRequest request =
@@ -426,7 +429,7 @@ public class MyExtension implements BurpExtension {
                                         .withMethod("POST")
                                         .withHeader("Authorization", "Bearer " + apiKey)
                                         .withHeader("Content-Type", "application/json")
-                                        .withBody(requestBody);
+                                        .withBody(ByteArray.byteArray(requestBody.getBytes(StandardCharsets.UTF_8)));
 
                         HttpResponse response = api.http().sendRequest(request).response();
 
@@ -514,8 +517,12 @@ public class MyExtension implements BurpExtension {
     }
 
     private String extractContentFromResponse(String body) {
+        String choicesKey = "\"choices\":";
+        int choicesIdx = body.indexOf(choicesKey);
+        if (choicesIdx == -1) return null;
+
         String searchKey = "\"content\":\"";
-        int idx = body.indexOf(searchKey);
+        int idx = body.indexOf(searchKey, choicesIdx);
         if (idx == -1) return null;
         idx += searchKey.length();
         StringBuilder content = new StringBuilder();
