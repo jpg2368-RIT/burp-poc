@@ -4,6 +4,8 @@ import burp.api.montoya.http.message.responses.HttpResponse;
 
 import javax.swing.*;
 import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 
 
 public class MyExtension implements BurpExtension {
@@ -366,6 +368,74 @@ public class MyExtension implements BurpExtension {
 
         inputParts.add(sendButton);
 
+        List<String[]> chatHistory = new ArrayList<>();
+
+        sendButton.addActionListener(e -> {
+            String text = inputBox.getText();
+            if (text.isBlank()) return;
+
+            String model = (String) modelDropdown.getSelectedItem();
+            if (model == null || model.isEmpty()) return;
+
+            appendChatMessage(chatArea, "You: " + text);
+            chatHistory.add(new String[]{"user", text});
+
+            StringBuilder jsonBuilder = new StringBuilder();
+            jsonBuilder.append("{\"model\":\"").append(escapeJson(model)).append("\",\"messages\":[");
+            for (int i = 0; i < chatHistory.size(); i++) {
+                if (i > 0) jsonBuilder.append(",");
+                jsonBuilder.append("{\"role\":\"").append(chatHistory.get(i)[0]).append("\",\"content\":\"")
+                        .append(escapeJson(chatHistory.get(i)[1])).append("\"}");
+            }
+            jsonBuilder.append("]}");
+            String requestBody = jsonBuilder.toString();
+
+            inputBox.setText("");
+
+            new Thread(() -> {
+                String endpoint = "";
+                String apiKey = "";
+                if (api.persistence().preferences().stringKeys().contains("apiEndpointUrl")) {
+                    endpoint = api.persistence().preferences().getString("apiEndpointUrl");
+                }
+                if (api.persistence().preferences().stringKeys().contains("apiKey")) {
+                    apiKey = api.persistence().preferences().getString("apiKey");
+                }
+
+                if (endpoint.isEmpty() || apiKey.isEmpty()) {
+                    appendChatMessage(chatArea, "System: Please configure API settings in Settings tab.");
+                    return;
+                }
+
+                try {
+                    String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+                    burp.api.montoya.http.message.requests.HttpRequest request =
+                            burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/chat/completions")
+                                    .withMethod("POST")
+                                    .withHeader("Authorization", "Bearer " + apiKey)
+                                    .withHeader("Content-Type", "application/json")
+                                    .withBody(requestBody);
+
+                    HttpResponse response = api.http().sendRequest(request).response();
+
+                    if (response.statusCode() == 200) {
+                        String body = response.bodyToString();
+                        String content = extractContentFromResponse(body);
+                        if (content != null) {
+                            appendChatMessage(chatArea, "Assistant: " + content);
+                            chatHistory.add(new String[]{"assistant", content});
+                        } else {
+                            appendChatMessage(chatArea, "System: Could not parse response content.\n" + body);
+                        }
+                    } else {
+                        appendChatMessage(chatArea, "System: HTTP " + response.statusCode() + "\n" + response.bodyToString());
+                    }
+                } catch (Exception ex) {
+                    appendChatMessage(chatArea, "System: Error - " + ex.getMessage());
+                }
+            }).start();
+        });
+
         chatTab.add(inputParts);
 
         // refresh models on button click
@@ -390,6 +460,51 @@ public class MyExtension implements BurpExtension {
     private void appendChatMessage(JTextArea chatArea, String message) {
         chatArea.append(message + "\n");
         chatArea.setCaretPosition(chatArea.getDocument().getLength());
+    }
+
+    private String escapeJson(String s) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\t' -> sb.append("\\t");
+                case '\r' -> sb.append("\\r");
+                default -> sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private String extractContentFromResponse(String body) {
+        String searchKey = "\"content\":\"";
+        int idx = body.indexOf(searchKey);
+        if (idx == -1) return null;
+        idx += searchKey.length();
+        StringBuilder content = new StringBuilder();
+        while (idx < body.length()) {
+            char c = body.charAt(idx);
+            if (c == '\\' && idx + 1 < body.length()) {
+                char next = body.charAt(idx + 1);
+                switch (next) {
+                    case '"' -> content.append('"');
+                    case '\\' -> content.append('\\');
+                    case 'n' -> content.append('\n');
+                    case 't' -> content.append('\t');
+                    case 'r' -> content.append('\r');
+                    default -> content.append(c).append(next);
+                }
+                idx += 2;
+            } else if (c == '"') {
+                break;
+            } else {
+                content.append(c);
+                idx++;
+            }
+        }
+        return content.toString();
     }
 
     private void refreshModels(JComboBox<String> modelDropdown, MontoyaApi api) {
