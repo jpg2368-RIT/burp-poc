@@ -9,8 +9,11 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.time.Duration;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
 import java.nio.charset.StandardCharsets;
@@ -175,24 +178,6 @@ public class MyExtension implements BurpExtension {
         resultScroll.setPreferredSize(new Dimension(0, 120));
         extPanel.add(resultScroll, gbc);
 
-        // vertical spacer
-        gbc.gridx = 0;
-        gbc.gridy = 8;
-        gbc.gridwidth = 2;
-        gbc.weighty = 1.0;
-        gbc.fill = GridBagConstraints.BOTH;
-        extPanel.add(Box.createGlue(), gbc);
-
-        // save button
-        gbc.gridx = 0;
-        gbc.gridy = 9;
-        gbc.gridwidth = 2;
-        gbc.weighty = 0;
-        gbc.fill = GridBagConstraints.NONE;
-        gbc.anchor = GridBagConstraints.SOUTHEAST;
-        JButton saveButton = new JButton("Save Settings");
-        extPanel.add(saveButton, gbc);
-
         // load saved settings
         if (api.persistence().preferences().stringKeys().contains("apiEndpointType")) {
             apiEndpointDropdown.setSelectedItem(api.persistence().preferences().getString("apiEndpointType"));
@@ -207,13 +192,28 @@ public class MyExtension implements BurpExtension {
             streamingCheckbox.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
         }
 
-        // save settings on button click
-        saveButton.addActionListener(e -> {
-            api.persistence().preferences().setString("apiEndpointType", (String) apiEndpointDropdown.getSelectedItem());
-            api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
-            api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
-            api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingCheckbox.isSelected()));
-            api.logging().logToOutput("Settings saved.");
+        // auto-save on any setting change
+        Runnable autoSave = () -> saveSettings(api, apiEndpointDropdown, endpointField, apiKeyField, streamingCheckbox);
+
+        apiEndpointDropdown.addActionListener(e -> autoSave.run());
+        streamingCheckbox.addActionListener(e -> autoSave.run());
+
+        endpointField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) { autoSave.run(); }
+            @Override
+            public void removeUpdate(DocumentEvent e) { autoSave.run(); }
+            @Override
+            public void changedUpdate(DocumentEvent e) { autoSave.run(); }
+        });
+
+        apiKeyField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) { autoSave.run(); }
+            @Override
+            public void removeUpdate(DocumentEvent e) { autoSave.run(); }
+            @Override
+            public void changedUpdate(DocumentEvent e) { autoSave.run(); }
         });
 
         // check rate limit on button click TODO: this isn't working on API end?
@@ -419,7 +419,7 @@ public class MyExtension implements BurpExtension {
 
                     if (streaming) {
                         sendChatStreaming(apiKey, baseUrl, requestBody, model, chatPane, chatHistory,
-                                chatProgress, sendButton, inputBox);
+                                chatProgress, sendButton, inputBox, streaming);
                     } else {
                         try {
                             burp.api.montoya.http.message.requests.HttpRequest request =
@@ -554,7 +554,7 @@ public class MyExtension implements BurpExtension {
 
     private void sendChatStreaming(String apiKey, String baseUrl, String requestBody, String model,
             JTextPane chatPane, List<String[]> chatHistory, JProgressBar chatProgress,
-            JButton sendButton, JTextArea inputBox) {
+            JButton sendButton, JTextArea inputBox, boolean streaming) {
         String url = baseUrl + "/v1/chat/completions";
 
         try {
@@ -563,6 +563,7 @@ public class MyExtension implements BurpExtension {
                     .uri(URI.create(url))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(streaming ? 120 : 300))
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
                     .build();
 
@@ -624,6 +625,15 @@ public class MyExtension implements BurpExtension {
         chatProgress.setVisible(false);
         sendButton.setEnabled(true);
         inputBox.setEnabled(true);
+    }
+
+    private void saveSettings(MontoyaApi api, JComboBox<String> endpointDropdown,
+            JTextField endpointField, JPasswordField apiKeyField, JCheckBox streamingCheckbox) {
+        api.persistence().preferences().setString("apiEndpointType", (String) endpointDropdown.getSelectedItem());
+        api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
+        api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
+        api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingCheckbox.isSelected()));
+        api.logging().logToOutput("Settings auto-saved.");
     }
 
     private void runSettingsTest(String endpoint, String apiKey, JTextArea resultArea,
