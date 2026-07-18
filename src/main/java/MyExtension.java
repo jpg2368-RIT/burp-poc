@@ -341,6 +341,14 @@ public class MyExtension implements BurpExtension {
         chatTab.add(modelRow);
         chatTab.add(Box.createVerticalStrut(10));
 
+        // progress bar
+        JProgressBar chatProgress = new JProgressBar();
+        chatProgress.setIndeterminate(true);
+        chatProgress.setVisible(false);
+        chatProgress.setMaximumSize(new Dimension(Integer.MAX_VALUE, 6));
+        chatTab.add(chatProgress);
+        chatTab.add(Box.createVerticalStrut(10));
+
         // input row
         JPanel inputParts = new JPanel();
         inputParts.setLayout(new BoxLayout(inputParts, BoxLayout.X_AXIS));
@@ -391,46 +399,58 @@ public class MyExtension implements BurpExtension {
 
             inputBox.setText("");
 
+            chatProgress.setVisible(true);
+            sendButton.setEnabled(false);
+            inputBox.setEnabled(false);
+
             new Thread(() -> {
-                String endpoint = "";
-                String apiKey = "";
-                if (api.persistence().preferences().stringKeys().contains("apiEndpointUrl")) {
-                    endpoint = api.persistence().preferences().getString("apiEndpointUrl");
-                }
-                if (api.persistence().preferences().stringKeys().contains("apiKey")) {
-                    apiKey = api.persistence().preferences().getString("apiKey");
-                }
-
-                if (endpoint.isEmpty() || apiKey.isEmpty()) {
-                    appendChatMessage(chatPane, "System", "Please configure API settings in Settings tab.");
-                    return;
-                }
-
                 try {
-                    String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
-                    burp.api.montoya.http.message.requests.HttpRequest request =
-                            burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/chat/completions")
-                                    .withMethod("POST")
-                                    .withHeader("Authorization", "Bearer " + apiKey)
-                                    .withHeader("Content-Type", "application/json")
-                                    .withBody(requestBody);
-
-                    HttpResponse response = api.http().sendRequest(request).response();
-
-                    if (response.statusCode() == 200) {
-                        String body = readResponseBody(response);
-                        String content = extractContentFromResponse(body);
-                        if (content != null) {
-                            appendChatMessage(chatPane, model, content);
-                            chatHistory.add(new String[]{"assistant", content});
-                        } else {
-                            appendChatMessage(chatPane, "System", "Could not parse response content.\n" + body);
-                        }
-                    } else {
-                        appendChatMessage(chatPane, "System", "HTTP " + response.statusCode() + "\n" + readResponseBody(response));
+                    String endpoint = "";
+                    String apiKey = "";
+                    if (api.persistence().preferences().stringKeys().contains("apiEndpointUrl")) {
+                        endpoint = api.persistence().preferences().getString("apiEndpointUrl");
                     }
-                } catch (Exception ex) {
-                    appendChatMessage(chatPane, "System", "Error - " + ex.getMessage());
+                    if (api.persistence().preferences().stringKeys().contains("apiKey")) {
+                        apiKey = api.persistence().preferences().getString("apiKey");
+                    }
+
+                    if (endpoint.isEmpty() || apiKey.isEmpty()) {
+                        appendChatMessage(chatPane, "System", "Please configure API settings in Settings tab.");
+                        return;
+                    }
+
+                    try {
+                        String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+                        burp.api.montoya.http.message.requests.HttpRequest request =
+                                burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/chat/completions")
+                                        .withMethod("POST")
+                                        .withHeader("Authorization", "Bearer " + apiKey)
+                                        .withHeader("Content-Type", "application/json")
+                                        .withBody(requestBody);
+
+                        HttpResponse response = api.http().sendRequest(request).response();
+
+                        if (response.statusCode() == 200) {
+                            String body = readResponseBody(response);
+                            String content = extractContentFromResponse(body);
+                            if (content != null) {
+                                appendChatMessage(chatPane, model, content);
+                                chatHistory.add(new String[]{"assistant", content});
+                            } else {
+                                appendChatMessage(chatPane, "System", "Could not parse response content.\n" + body);
+                            }
+                        } else {
+                            appendChatMessage(chatPane, "System", "HTTP " + response.statusCode() + "\n" + readResponseBody(response));
+                        }
+                    } catch (Exception ex) {
+                        appendChatMessage(chatPane, "System", "Error - " + ex.getMessage());
+                    }
+                } finally {
+                    SwingUtilities.invokeLater(() -> {
+                        chatProgress.setVisible(false);
+                        sendButton.setEnabled(true);
+                        inputBox.setEnabled(true);
+                    });
                 }
             }).start();
         });
