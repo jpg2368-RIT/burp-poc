@@ -3,7 +3,9 @@ import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import javax.swing.*;
+import javax.swing.text.*;
 import java.awt.*;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -312,13 +314,10 @@ public class MyExtension implements BurpExtension {
         chatTab.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         // chat history
-        JTextArea chatArea = new JTextArea();
-        chatArea.setEditable(false);
-        chatArea.setLineWrap(true);
-        chatArea.setWrapStyleWord(true);
-        chatArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        JTextPane chatPane = new JTextPane();
+        chatPane.setEditable(false);
 
-        JScrollPane chatScroll = new JScrollPane(chatArea);
+        JScrollPane chatScroll = new JScrollPane(chatPane);
         chatScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
         chatScroll.setPreferredSize(new Dimension(0, 0));
         chatScroll.setMinimumSize(new Dimension(0, 100));
@@ -377,7 +376,7 @@ public class MyExtension implements BurpExtension {
             String model = (String) modelDropdown.getSelectedItem();
             if (model == null || model.isEmpty()) return;
 
-            appendChatMessage(chatArea, "You: " + text);
+            appendChatMessage(chatPane, "You", text);
             chatHistory.add(new String[]{"user", text});
 
             StringBuilder jsonBuilder = new StringBuilder();
@@ -403,7 +402,7 @@ public class MyExtension implements BurpExtension {
                 }
 
                 if (endpoint.isEmpty() || apiKey.isEmpty()) {
-                    appendChatMessage(chatArea, "System: Please configure API settings in Settings tab.");
+                    appendChatMessage(chatPane, "System", "Please configure API settings in Settings tab.");
                     return;
                 }
 
@@ -419,19 +418,19 @@ public class MyExtension implements BurpExtension {
                     HttpResponse response = api.http().sendRequest(request).response();
 
                     if (response.statusCode() == 200) {
-                        String body = response.bodyToString();
+                        String body = readResponseBody(response);
                         String content = extractContentFromResponse(body);
                         if (content != null) {
-                            appendChatMessage(chatArea, "Assistant: " + content);
+                            appendChatMessage(chatPane, model, content);
                             chatHistory.add(new String[]{"assistant", content});
                         } else {
-                            appendChatMessage(chatArea, "System: Could not parse response content.\n" + body);
+                            appendChatMessage(chatPane, "System", "Could not parse response content.\n" + body);
                         }
                     } else {
-                        appendChatMessage(chatArea, "System: HTTP " + response.statusCode() + "\n" + response.bodyToString());
+                        appendChatMessage(chatPane, "System", "HTTP " + response.statusCode() + "\n" + readResponseBody(response));
                     }
                 } catch (Exception ex) {
-                    appendChatMessage(chatArea, "System: Error - " + ex.getMessage());
+                    appendChatMessage(chatPane, "System", "Error - " + ex.getMessage());
                 }
             }).start();
         });
@@ -457,9 +456,25 @@ public class MyExtension implements BurpExtension {
         return api.http().sendRequest(request).response();
     }
 
-    private void appendChatMessage(JTextArea chatArea, String message) {
-        chatArea.append(message + "\n");
-        chatArea.setCaretPosition(chatArea.getDocument().getLength());
+    private void appendChatMessage(JTextPane chatPane, String speaker, String message) {
+        StyledDocument doc = chatPane.getStyledDocument();
+
+        Style bold = chatPane.addStyle("bold", null);
+        StyleConstants.setBold(bold, true);
+        Style normal = chatPane.addStyle("normal", null);
+
+        try {
+            doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
+            doc.insertString(doc.getLength(), message + "\n\n", normal);
+        } catch (BadLocationException e) {
+            // shouldn't happen
+        }
+
+        chatPane.setCaretPosition(doc.getLength());
+    }
+
+    private String readResponseBody(HttpResponse response) {
+        return new String(response.body().getBytes(), StandardCharsets.UTF_8);
     }
 
     private String escapeJson(String s) {
