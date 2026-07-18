@@ -9,8 +9,6 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
 
 import javax.swing.*;
 import javax.swing.text.*;
@@ -114,16 +112,17 @@ public class MyExtension implements BurpExtension {
 
         gbc.insets = new Insets(6, 6, 6, 6);
 
-        // streaming toggle
+        // streaming checkbox
         gbc.gridx = 0;
         gbc.gridy = 4;
         gbc.gridwidth = 2;
-        gbc.weightx = 0;
-        gbc.fill = GridBagConstraints.NONE;
-        gbc.anchor = GridBagConstraints.WEST;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
         gbc.insets = new Insets(10, 0, 6, 0);
-        ToggleSwitch streamingToggle = new ToggleSwitch(true);
-        extPanel.add(streamingToggle, gbc);
+        JCheckBox streamingCheckbox = new JCheckBox("Response Streaming");
+        streamingCheckbox.setSelected(true);
+        extPanel.add(streamingCheckbox, gbc);
 
         gbc.insets = new Insets(6, 6, 6, 6);
 
@@ -205,7 +204,7 @@ public class MyExtension implements BurpExtension {
             apiKeyField.setText(api.persistence().preferences().getString("apiKey"));
         }
         if (api.persistence().preferences().stringKeys().contains("streamEnabled")) {
-            streamingToggle.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
+            streamingCheckbox.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
         }
 
         // save settings on button click
@@ -213,7 +212,7 @@ public class MyExtension implements BurpExtension {
             api.persistence().preferences().setString("apiEndpointType", (String) apiEndpointDropdown.getSelectedItem());
             api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
             api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
-            api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingToggle.isSelected()));
+            api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingCheckbox.isSelected()));
             api.logging().logToOutput("Settings saved.");
         });
 
@@ -726,54 +725,6 @@ public class MyExtension implements BurpExtension {
             }
         } catch (Exception ex) {
             api.logging().logToOutput("Failed to refresh models: " + ex.getMessage());
-        }
-    }
-
-    static class ToggleSwitch extends JPanel {
-        private boolean selected;
-        private static final int TRACK_WIDTH = 36;
-        private static final int TRACK_HEIGHT = 18;
-        private static final int THUMB_SIZE = 14;
-        private static final int TRACK_ARC = 9;
-
-        ToggleSwitch(boolean initial) {
-            selected = initial;
-            setOpaque(false);
-            setPreferredSize(new Dimension(200, 26));
-            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-            addMouseListener(new MouseAdapter() {
-                @Override
-                public void mouseClicked(MouseEvent e) {
-                    selected = !selected;
-                    repaint();
-                }
-            });
-        }
-
-        boolean isSelected() { return selected; }
-
-        void setSelected(boolean s) { selected = s; repaint(); }
-
-        @Override
-        protected void paintComponent(Graphics g) {
-            Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-
-            int y = (getHeight() - TRACK_HEIGHT) / 2;
-
-            g2.setColor(selected ? new Color(0, 122, 0) : new Color(180, 180, 180));
-            g2.fillRoundRect(0, y, TRACK_WIDTH, TRACK_HEIGHT, TRACK_ARC, TRACK_ARC);
-
-            int thumbX = selected ? TRACK_WIDTH - THUMB_SIZE - 2 : 2;
-            g2.setColor(Color.WHITE);
-            g2.fillOval(thumbX, y + (TRACK_HEIGHT - THUMB_SIZE) / 2, THUMB_SIZE, THUMB_SIZE);
-
-            g2.setFont(getFont());
-            FontMetrics fm = g2.getFontMetrics();
-            g2.setColor(getForeground());
-            g2.drawString("Response Streaming", TRACK_WIDTH + 10, y + (TRACK_HEIGHT + fm.getAscent()) / 2 - 1);
-
-            g2.dispose();
         }
     }
 }
