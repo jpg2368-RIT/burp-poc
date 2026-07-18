@@ -9,6 +9,8 @@ import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 
 import javax.swing.*;
 import javax.swing.text.*;
@@ -112,17 +114,16 @@ public class MyExtension implements BurpExtension {
 
         gbc.insets = new Insets(6, 6, 6, 6);
 
-        // streaming checkbox
+        // streaming toggle
         gbc.gridx = 0;
         gbc.gridy = 4;
         gbc.gridwidth = 2;
-        gbc.weightx = 1.0;
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.WEST;
         gbc.insets = new Insets(10, 0, 6, 0);
-        JCheckBox streamingCheckbox = new JCheckBox("Enable streaming (default)");
-        streamingCheckbox.setSelected(true);
-        extPanel.add(streamingCheckbox, gbc);
+        ToggleSwitch streamingToggle = new ToggleSwitch(true);
+        extPanel.add(streamingToggle, gbc);
 
         gbc.insets = new Insets(6, 6, 6, 6);
 
@@ -204,7 +205,7 @@ public class MyExtension implements BurpExtension {
             apiKeyField.setText(api.persistence().preferences().getString("apiKey"));
         }
         if (api.persistence().preferences().stringKeys().contains("streamEnabled")) {
-            streamingCheckbox.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
+            streamingToggle.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
         }
 
         // save settings on button click
@@ -212,7 +213,7 @@ public class MyExtension implements BurpExtension {
             api.persistence().preferences().setString("apiEndpointType", (String) apiEndpointDropdown.getSelectedItem());
             api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
             api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
-            api.persistence().preferences().setString("streamEnabled", streamingCheckbox.isSelected() ? "true" : "false");
+            api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingToggle.isSelected()));
             api.logging().logToOutput("Settings saved.");
         });
 
@@ -220,118 +221,76 @@ public class MyExtension implements BurpExtension {
         checkRateLimitButton.addActionListener(e -> {
             String endpoint = endpointField.getText().strip();
             String apiKey = new String(apiKeyField.getPassword()).strip();
+            runSettingsTest(endpoint, apiKey, resultArea, "Checking rate limit...", () -> {
+                HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
 
-            if (endpoint.isEmpty() || apiKey.isEmpty()) {
-                resultArea.setText("Please fill in Endpoint URL and API Key first.");
-                return;
-            }
-
-            resultArea.setText("Checking rate limit...");
-            resultArea.repaint();
-
-            new Thread(() -> {
-                try {
-                    HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
-
-                    StringBuilder allHeaders = new StringBuilder();
-                    for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
-                        allHeaders.append(header.name()).append(": ").append(header.value()).append("\n");
-                    }
-                    api.logging().logToOutput("Rate limit check - HTTP " + response.statusCode() + "\nHeaders:\n" + allHeaders);
-
-                    String limit = null, remaining = null, reset = null;
-                    for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
-                        String name = header.name().toLowerCase();
-                        switch (name) {
-                            case "x-ai-ratelimit-limit-ai-proxy-openai-compatible" -> limit = header.value();
-                            case "x-ai-ratelimit-remaining-ai-proxy-openai-compatible" -> remaining = header.value();
-                            case "x-ai-ratelimit-reset-ai-proxy-openai-compatible" -> reset = header.value();
-                        }
-                    }
-
-                    if (limit != null) {
-                        resultArea.setText("Rate Limit:     " + limit + "\n"
-                                + "Remaining:      " + remaining + "\n"
-                                + "Reset (sec):    " + reset);
-                    } else {
-                        resultArea.setText("HTTP " + response.statusCode() + " - No rate limit headers found.\n"
-                                + "All response headers logged to Output tab.");
-                    }
-                } catch (Exception ex) {
-                    resultArea.setText("Error: " + ex.getMessage());
+                StringBuilder allHeaders = new StringBuilder();
+                for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
+                    allHeaders.append(header.name()).append(": ").append(header.value()).append("\n");
                 }
-                resultArea.repaint();
-            }).start();
+                api.logging().logToOutput("Rate limit check - HTTP " + response.statusCode() + "\nHeaders:\n" + allHeaders);
+
+                String limit = null, remaining = null, reset = null;
+                for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
+                    String name = header.name().toLowerCase();
+                    switch (name) {
+                        case "x-ai-ratelimit-limit-ai-proxy-openai-compatible" -> limit = header.value();
+                        case "x-ai-ratelimit-remaining-ai-proxy-openai-compatible" -> remaining = header.value();
+                        case "x-ai-ratelimit-reset-ai-proxy-openai-compatible" -> reset = header.value();
+                    }
+                }
+
+                if (limit != null) {
+                    resultArea.setText("Rate Limit:     " + limit + "\n"
+                            + "Remaining:      " + remaining + "\n"
+                            + "Reset (sec):    " + reset);
+                } else {
+                    resultArea.setText("HTTP " + response.statusCode() + " - No rate limit headers found.\n"
+                            + "All response headers logged to Output tab.");
+                }
+            });
         });
 
         // list models on button click
         listModelsButton.addActionListener(e -> {
             String endpoint = endpointField.getText().strip();
             String apiKey = new String(apiKeyField.getPassword()).strip();
+            runSettingsTest(endpoint, apiKey, resultArea, "Fetching models...", () -> {
+                HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
 
-            if (endpoint.isEmpty() || apiKey.isEmpty()) {
-                resultArea.setText("Please fill in Endpoint URL and API Key first.");
-                return;
-            }
-
-            resultArea.setText("Fetching models...");
-            resultArea.repaint();
-
-            new Thread(() -> {
-                try {
-                    HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
-
-                    if (response.statusCode() == 200) {
-                        resultArea.setText(response.bodyToString());
-                    } else {
-                        resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
-                    }
-                    api.logging().logToOutput("List models - HTTP " + response.statusCode());
-                } catch (Exception ex) {
-                    resultArea.setText("Error: " + ex.getMessage());
+                if (response.statusCode() == 200) {
+                    resultArea.setText(response.bodyToString());
+                } else {
+                    resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                 }
-                resultArea.repaint();
-            }).start();
+                api.logging().logToOutput("List models - HTTP " + response.statusCode());
+            });
         });
 
         // test chat on button click
         testChatButton.addActionListener(e -> {
             String endpoint = endpointField.getText().strip();
             String apiKey = new String(apiKeyField.getPassword()).strip();
+            runSettingsTest(endpoint, apiKey, resultArea, "Sending test chat request...", () -> {
+                String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+                String json = "{\"model\":\"qwen3:latest\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}";
 
-            if (endpoint.isEmpty() || apiKey.isEmpty()) {
-                resultArea.setText("Please fill in Endpoint URL and API Key first.");
-                return;
-            }
+                burp.api.montoya.http.message.requests.HttpRequest request =
+                        burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/chat/completions")
+                                .withMethod("POST")
+                                .withHeader("Authorization", "Bearer " + apiKey)
+                                .withHeader("Content-Type", "application/json")
+                                .withBody(json);
 
-            resultArea.setText("Sending test chat request...");
-            resultArea.repaint();
+                HttpResponse response = api.http().sendRequest(request).response();
 
-            new Thread(() -> {
-                try {
-                    String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
-                    String json = "{\"model\":\"qwen3:latest\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}]}";
-
-                    burp.api.montoya.http.message.requests.HttpRequest request =
-                            burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/chat/completions")
-                                    .withMethod("POST")
-                                    .withHeader("Authorization", "Bearer " + apiKey)
-                                    .withHeader("Content-Type", "application/json")
-                                    .withBody(json);
-
-                    HttpResponse response = api.http().sendRequest(request).response();
-
-                    if (response.statusCode() == 200) {
-                        resultArea.setText(response.bodyToString());
-                    } else {
-                        resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
-                    }
-                    api.logging().logToOutput("Test chat - HTTP " + response.statusCode());
-                } catch (Exception ex) {
-                    resultArea.setText("Error: " + ex.getMessage());
+                if (response.statusCode() == 200) {
+                    resultArea.setText(response.bodyToString());
+                } else {
+                    resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                 }
-                resultArea.repaint();
-            }).start();
+                api.logging().logToOutput("Test chat - HTTP " + response.statusCode());
+            });
         });
 
         api.userInterface().registerSuiteTab("Settings POC", extPanel);
@@ -531,7 +490,7 @@ public class MyExtension implements BurpExtension {
             doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
             doc.insertString(doc.getLength(), message + "\n\n", normal);
         } catch (BadLocationException e) {
-            // shouldn't happen
+            MAPI.getAPI().logging().logToOutput("appendChatMessage BadLocationException: " + e.getMessage());
         }
 
         chatPane.setCaretPosition(doc.getLength());
@@ -557,20 +516,12 @@ public class MyExtension implements BurpExtension {
         return sb.toString();
     }
 
-    private String extractContentFromResponse(String body) {
-        String choicesKey = "\"choices\":";
-        int choicesIdx = body.indexOf(choicesKey);
-        if (choicesIdx == -1) return null;
-
-        String searchKey = "\"content\":\"";
-        int idx = body.indexOf(searchKey, choicesIdx);
-        if (idx == -1) return null;
-        idx += searchKey.length();
+    private String unescapeJsonString(String s, int startIdx) {
         StringBuilder content = new StringBuilder();
-        while (idx < body.length()) {
-            char c = body.charAt(idx);
-            if (c == '\\' && idx + 1 < body.length()) {
-                char next = body.charAt(idx + 1);
+        while (startIdx < s.length()) {
+            char c = s.charAt(startIdx);
+            if (c == '\\' && startIdx + 1 < s.length()) {
+                char next = s.charAt(startIdx + 1);
                 switch (next) {
                     case '"' -> content.append('"');
                     case '\\' -> content.append('\\');
@@ -579,15 +530,27 @@ public class MyExtension implements BurpExtension {
                     case 'r' -> content.append('\r');
                     default -> content.append(c).append(next);
                 }
-                idx += 2;
+                startIdx += 2;
             } else if (c == '"') {
                 break;
             } else {
                 content.append(c);
-                idx++;
+                startIdx++;
             }
         }
         return content.toString();
+    }
+
+    private String extractContentFromResponse(String body) {
+        String choicesKey = "\"choices\":";
+        int choicesIdx = body.indexOf(choicesKey);
+        if (choicesIdx == -1) return null;
+
+        String searchKey = "\"content\":\"";
+        int idx = body.indexOf(searchKey, choicesIdx);
+        if (idx == -1) return null;
+
+        return unescapeJsonString(body, idx + searchKey.length());
     }
 
     private void sendChatStreaming(String apiKey, String baseUrl, String requestBody, String model,
@@ -610,60 +573,78 @@ public class MyExtension implements BurpExtension {
             if (rawResponse.statusCode() != 200) {
                 String errorBody = new String(rawResponse.body().readAllBytes(), StandardCharsets.UTF_8);
                 SwingUtilities.invokeLater(() -> {
-                    chatProgress.setVisible(false);
                     appendChatMessage(chatPane, "System", "HTTP " + rawResponse.statusCode() + "\n" + errorBody);
-                    sendButton.setEnabled(true);
-                    inputBox.setEnabled(true);
+                    cleanupChatControls(chatProgress, sendButton, inputBox);
                 });
                 return;
             }
 
-            BufferedReader reader = new BufferedReader(new InputStreamReader(rawResponse.body(), StandardCharsets.UTF_8));
+            try (InputStream is = rawResponse.body();
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
 
-            StringBuilder fullContent = new StringBuilder();
-            String line;
-            boolean firstChunk = true;
+                StringBuilder fullContent = new StringBuilder();
+                String line;
+                boolean firstChunk = true;
 
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6);
-                    if (data.equals("[DONE]")) break;
+                while ((line = reader.readLine()) != null) {
+                    if (line.startsWith("data: ")) {
+                        String data = line.substring(6);
+                        if (data.equals("[DONE]")) break;
 
-                    String delta = extractDeltaContent(data);
-                    if (delta != null && !delta.isEmpty()) {
-                        if (firstChunk) {
-                            firstChunk = false;
-                            String modelName = model;
-                            SwingUtilities.invokeLater(() -> {
-                                chatProgress.setVisible(false);
-                                startStreamingMessage(chatPane, modelName);
-                            });
+                        String delta = extractDeltaContent(data);
+                        if (!delta.isEmpty()) {
+                            if (firstChunk) {
+                                firstChunk = false;
+                                SwingUtilities.invokeLater(() -> {
+                                    chatProgress.setVisible(false);
+                                    startStreamingMessage(chatPane, model);
+                                });
+                            }
+                            fullContent.append(delta);
+                            SwingUtilities.invokeLater(() -> appendStreamingContent(chatPane, delta));
                         }
-                        fullContent.append(delta);
-                        String deltaText = delta;
-                        SwingUtilities.invokeLater(() -> {
-                            appendStreamingContent(chatPane, deltaText);
-                        });
                     }
                 }
-            }
 
-            chatHistory.add(new String[]{"assistant", fullContent.toString()});
-            SwingUtilities.invokeLater(() -> {
-                finishStreamingMessage(chatPane);
-                chatProgress.setVisible(false);
-                sendButton.setEnabled(true);
-                inputBox.setEnabled(true);
-            });
+                chatHistory.add(new String[]{"assistant", fullContent.toString()});
+                SwingUtilities.invokeLater(() -> {
+                    finishStreamingMessage(chatPane);
+                    cleanupChatControls(chatProgress, sendButton, inputBox);
+                });
+            }
 
         } catch (Exception ex) {
             SwingUtilities.invokeLater(() -> {
-                chatProgress.setVisible(false);
                 appendChatMessage(chatPane, "System", "Error - " + ex.getMessage());
-                sendButton.setEnabled(true);
-                inputBox.setEnabled(true);
+                cleanupChatControls(chatProgress, sendButton, inputBox);
             });
         }
+    }
+
+    private void cleanupChatControls(JProgressBar chatProgress, JButton sendButton, JTextArea inputBox) {
+        chatProgress.setVisible(false);
+        sendButton.setEnabled(true);
+        inputBox.setEnabled(true);
+    }
+
+    private void runSettingsTest(String endpoint, String apiKey, JTextArea resultArea,
+            String loadingText, Runnable task) {
+        if (endpoint.isEmpty() || apiKey.isEmpty()) {
+            resultArea.setText("Please fill in Endpoint URL and API Key first.");
+            return;
+        }
+
+        resultArea.setText(loadingText);
+        resultArea.repaint();
+
+        new Thread(() -> {
+            try {
+                task.run();
+            } catch (Exception ex) {
+                resultArea.setText("Error: " + ex.getMessage());
+            }
+            resultArea.repaint();
+        }).start();
     }
 
     private void startStreamingMessage(JTextPane chatPane, String speaker) {
@@ -672,7 +653,9 @@ public class MyExtension implements BurpExtension {
         StyleConstants.setBold(bold, true);
         try {
             doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
-        } catch (BadLocationException e) {}
+        } catch (BadLocationException e) {
+            MAPI.getAPI().logging().logToOutput("startStreamingMessage BadLocationException: " + e.getMessage());
+        }
         chatPane.setCaretPosition(doc.getLength());
     }
 
@@ -681,7 +664,9 @@ public class MyExtension implements BurpExtension {
         Style normal = chatPane.addStyle("streamNormal", null);
         try {
             doc.insertString(doc.getLength(), content, normal);
-        } catch (BadLocationException e) {}
+        } catch (BadLocationException e) {
+            MAPI.getAPI().logging().logToOutput("appendStreamingContent BadLocationException: " + e.getMessage());
+        }
         chatPane.setCaretPosition(doc.getLength());
     }
 
@@ -690,7 +675,9 @@ public class MyExtension implements BurpExtension {
         Style normal = chatPane.addStyle("streamNormal", null);
         try {
             doc.insertString(doc.getLength(), "\n\n", normal);
-        } catch (BadLocationException e) {}
+        } catch (BadLocationException e) {
+            MAPI.getAPI().logging().logToOutput("finishStreamingMessage BadLocationException: " + e.getMessage());
+        }
         chatPane.setCaretPosition(doc.getLength());
     }
 
@@ -703,29 +690,7 @@ public class MyExtension implements BurpExtension {
         int contentIdx = data.indexOf(contentKey, deltaIdx);
         if (contentIdx == -1) return "";
 
-        contentIdx += contentKey.length();
-        StringBuilder content = new StringBuilder();
-        while (contentIdx < data.length()) {
-            char c = data.charAt(contentIdx);
-            if (c == '\\' && contentIdx + 1 < data.length()) {
-                char next = data.charAt(contentIdx + 1);
-                switch (next) {
-                    case '"' -> content.append('"');
-                    case '\\' -> content.append('\\');
-                    case 'n' -> content.append('\n');
-                    case 't' -> content.append('\t');
-                    case 'r' -> content.append('\r');
-                    default -> content.append(c).append(next);
-                }
-                contentIdx += 2;
-            } else if (c == '"') {
-                break;
-            } else {
-                content.append(c);
-                contentIdx++;
-            }
-        }
-        return content.toString();
+        return unescapeJsonString(data, contentIdx + contentKey.length());
     }
 
     private void refreshModels(JComboBox<String> modelDropdown, MontoyaApi api) {
@@ -761,6 +726,54 @@ public class MyExtension implements BurpExtension {
             }
         } catch (Exception ex) {
             api.logging().logToOutput("Failed to refresh models: " + ex.getMessage());
+        }
+    }
+
+    static class ToggleSwitch extends JPanel {
+        private boolean selected;
+        private static final int TRACK_WIDTH = 36;
+        private static final int TRACK_HEIGHT = 18;
+        private static final int THUMB_SIZE = 14;
+        private static final int TRACK_ARC = 9;
+
+        ToggleSwitch(boolean initial) {
+            selected = initial;
+            setOpaque(false);
+            setPreferredSize(new Dimension(200, 26));
+            setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseClicked(MouseEvent e) {
+                    selected = !selected;
+                    repaint();
+                }
+            });
+        }
+
+        boolean isSelected() { return selected; }
+
+        void setSelected(boolean s) { selected = s; repaint(); }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+            int y = (getHeight() - TRACK_HEIGHT) / 2;
+
+            g2.setColor(selected ? new Color(0, 122, 0) : new Color(180, 180, 180));
+            g2.fillRoundRect(0, y, TRACK_WIDTH, TRACK_HEIGHT, TRACK_ARC, TRACK_ARC);
+
+            int thumbX = selected ? TRACK_WIDTH - THUMB_SIZE - 2 : 2;
+            g2.setColor(Color.WHITE);
+            g2.fillOval(thumbX, y + (TRACK_HEIGHT - THUMB_SIZE) / 2, THUMB_SIZE, THUMB_SIZE);
+
+            g2.setFont(getFont());
+            FontMetrics fm = g2.getFontMetrics();
+            g2.setColor(getForeground());
+            g2.drawString("Response Streaming", TRACK_WIDTH + 10, y + (TRACK_HEIGHT + fm.getAscent()) / 2 - 1);
+
+            g2.dispose();
         }
     }
 }
