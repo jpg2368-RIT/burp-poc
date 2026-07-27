@@ -328,10 +328,12 @@ public class MyExtension implements BurpExtension {
         JLabel modelLabel = new JLabel("Model:");
         JComboBox<String> modelDropdown = new JComboBox<>();
         JButton refreshModelsButton = new JButton("Refresh");
+        JButton clearChatButton = new JButton("Clear Chat");
 
         modelRow.add(modelLabel);
         modelRow.add(modelDropdown);
         modelRow.add(refreshModelsButton);
+        modelRow.add(clearChatButton);
         chatTab.add(modelRow);
         chatTab.add(Box.createVerticalStrut(10));
 
@@ -470,6 +472,11 @@ public class MyExtension implements BurpExtension {
 
         // refresh models on button click
         refreshModelsButton.addActionListener(e -> new Thread(() -> refreshModels(modelDropdown, api)).start());
+
+        clearChatButton.addActionListener(e -> {
+            chatHistory.clear();
+            chatPane.setText("");
+        });
 
         api.userInterface().registerSuiteTab("Chat POC", chatTab);
 
