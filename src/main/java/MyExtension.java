@@ -22,6 +22,8 @@ import java.util.List;
 
 
 public class MyExtension implements BurpExtension {
+    static JTextArea chatInputBox;
+
     @Override
     public void initialize(MontoyaApi api) {
         MAPI.initialize(api);
@@ -177,6 +179,12 @@ public class MyExtension implements BurpExtension {
         JScrollPane resultScroll = new JScrollPane(resultArea);
         resultScroll.setPreferredSize(new Dimension(0, 120));
         extPanel.add(resultScroll, gbc);
+
+        // vertical spacer to push content to top
+        gbc.gridy = 8;
+        gbc.weighty = 1.0;
+        gbc.fill = GridBagConstraints.BOTH;
+        extPanel.add(Box.createGlue(), gbc);
 
         // load saved settings
         if (api.persistence().preferences().stringKeys().contains("apiEndpointType")) {
@@ -343,6 +351,7 @@ public class MyExtension implements BurpExtension {
 
         // input box
         JTextArea inputBox = new JTextArea(4, 40);
+        chatInputBox = inputBox;
         inputBox.setLineWrap(true);
         inputBox.setWrapStyleWord(true);
 
@@ -466,6 +475,9 @@ public class MyExtension implements BurpExtension {
 
         // autopopulate models on load
         new Thread(() -> refreshModels(modelDropdown, api)).start();
+
+        // register repeater context menu
+        api.userInterface().registerContextMenuItemsProvider(new RepeaterContextMenuProvider());
     }
 
     private HttpResponse sendApiRequest(MontoyaApi api, String endpoint, String apiKey, String path) {
