@@ -16,6 +16,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
+import java.awt.event.ActionEvent;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -371,6 +372,22 @@ public class MyExtension implements BurpExtension {
         sendButton.setMaximumSize(new Dimension(90, 80));
 
         inputParts.add(sendButton);
+
+        inputBox.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "send");
+        inputBox.getActionMap().put("send", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                sendButton.doClick();
+            }
+        });
+
+        inputBox.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("shift ENTER"), "newline");
+        inputBox.getActionMap().put("newline", new AbstractAction() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                inputBox.replaceSelection("\n");
+            }
+        });
 
         List<String[]> chatHistory = new ArrayList<>();
 
