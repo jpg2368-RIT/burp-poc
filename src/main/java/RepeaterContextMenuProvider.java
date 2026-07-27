@@ -25,7 +25,7 @@ public class RepeaterContextMenuProvider implements ContextMenuItemsProvider {
         JMenuItem menuItem = new JMenuItem("Send to POC Chat");
         menuItem.addActionListener(e -> SwingUtilities.invokeLater(() -> {
             if (MyExtension.chatInputBox != null) {
-                MyExtension.chatInputBox.setText("Here is a request from the Repeater tab of Burp Suite by the user:\n```\n" + requestText + "\n```\n");
+                MyExtension.chatInputBox.setText("Here is a request from the Repeater tab of Burp Suite from the user:\n```\n" + requestText + "\n```\n");
             }
         }));
 

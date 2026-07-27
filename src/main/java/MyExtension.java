@@ -304,8 +304,7 @@ public class MyExtension implements BurpExtension {
         api.userInterface().registerSuiteTab("Settings POC", extPanel);
 
         // make chat tab
-        JPanel chatTab = new JPanel();
-        chatTab.setLayout(new BoxLayout(chatTab, BoxLayout.Y_AXIS));
+        JPanel chatTab = new JPanel(new BorderLayout());
         chatTab.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
 
         // chat history
@@ -313,18 +312,9 @@ public class MyExtension implements BurpExtension {
         chatPane.setEditable(false);
 
         JScrollPane chatScroll = new JScrollPane(chatPane);
-        chatScroll.setAlignmentX(Component.LEFT_ALIGNMENT);
-        chatScroll.setPreferredSize(new Dimension(0, 0));
-        chatScroll.setMinimumSize(new Dimension(0, 100));
-        chatScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, Integer.MAX_VALUE));
-
-        chatTab.add(chatScroll);
-        chatTab.add(Box.createVerticalStrut(10));
 
         // model selector row
         JPanel modelRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        modelRow.setAlignmentX(Component.LEFT_ALIGNMENT);
-        modelRow.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
 
         JLabel modelLabel = new JLabel("Model:");
         JComboBox<String> modelDropdown = new JComboBox<>();
@@ -335,22 +325,20 @@ public class MyExtension implements BurpExtension {
         modelRow.add(modelDropdown);
         modelRow.add(refreshModelsButton);
         modelRow.add(clearChatButton);
-        chatTab.add(modelRow);
-        chatTab.add(Box.createVerticalStrut(10));
 
         // progress bar
         JProgressBar chatProgress = new JProgressBar();
         chatProgress.setIndeterminate(true);
         chatProgress.setVisible(false);
         chatProgress.setMaximumSize(new Dimension(Integer.MAX_VALUE, 6));
-        chatTab.add(chatProgress);
-        chatTab.add(Box.createVerticalStrut(10));
 
-        // input row
-        JPanel inputParts = new JPanel();
-        inputParts.setLayout(new BoxLayout(inputParts, BoxLayout.X_AXIS));
-        inputParts.setAlignmentX(Component.LEFT_ALIGNMENT);
-        inputParts.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
+        // top panel: pinned at NORTH
+        JPanel topPanel = new JPanel();
+        topPanel.setLayout(new BoxLayout(topPanel, BoxLayout.Y_AXIS));
+        topPanel.add(modelRow);
+        topPanel.add(Box.createVerticalStrut(4));
+        topPanel.add(chatProgress);
+        chatTab.add(topPanel, BorderLayout.NORTH);
 
         // input box
         JTextArea inputBox = new JTextArea(4, 40);
@@ -359,19 +347,32 @@ public class MyExtension implements BurpExtension {
         inputBox.setWrapStyleWord(true);
 
         JScrollPane inputScroll = new JScrollPane(inputBox);
+        inputScroll.setMinimumSize(new Dimension(0, 80));
         inputScroll.setPreferredSize(new Dimension(0, 80));
-        inputScroll.setMaximumSize(new Dimension(Integer.MAX_VALUE, 80));
 
-        inputParts.add(inputScroll);
-        inputParts.add(Box.createHorizontalStrut(8));
-
-        // send button
+        // send button — fixed 90x80
         JButton sendButton = new JButton("SEND");
         sendButton.setPreferredSize(new Dimension(90, 80));
         sendButton.setMinimumSize(new Dimension(90, 80));
         sendButton.setMaximumSize(new Dimension(90, 80));
 
-        inputParts.add(sendButton);
+        // input panel: scroll expands, send button stays fixed
+        JPanel inputPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints inputGbc = new GridBagConstraints();
+        inputGbc.gridx = 0; inputGbc.gridy = 0;
+        inputGbc.weightx = 1.0; inputGbc.weighty = 1.0;
+        inputGbc.fill = GridBagConstraints.BOTH;
+        inputPanel.add(inputScroll, inputGbc);
+        inputGbc.gridx = 1; inputGbc.weightx = 0; inputGbc.weighty = 0;
+        inputGbc.fill = GridBagConstraints.NONE;
+        inputGbc.anchor = GridBagConstraints.SOUTHEAST;
+        inputPanel.add(sendButton, inputGbc);
+
+        // split pane for resizable input area
+        JSplitPane chatSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, chatScroll, inputPanel);
+        chatSplit.setResizeWeight(1.0);
+        chatSplit.setDividerSize(6);
+        chatTab.add(chatSplit, BorderLayout.CENTER);
 
         inputBox.getInputMap(JComponent.WHEN_FOCUSED).put(KeyStroke.getKeyStroke("ENTER"), "send");
         inputBox.getActionMap().put("send", new AbstractAction() {
@@ -484,8 +485,6 @@ public class MyExtension implements BurpExtension {
                 }
             }).start();
         });
-
-        chatTab.add(inputParts);
 
         // refresh models on button click
         refreshModelsButton.addActionListener(e -> new Thread(() -> refreshModels(modelDropdown, api)).start());
