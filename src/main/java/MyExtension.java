@@ -29,6 +29,10 @@ import java.util.List;
 public class MyExtension implements BurpExtension {
     static JTextArea chatInputBox;
 
+    private final StringBuilder streamingMarkdown = new StringBuilder();
+    private int streamingStartOffset = 0;
+    private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
+
     @Override
     public void initialize(MontoyaApi api) {
         MAPI.initialize(api);
@@ -497,6 +501,7 @@ public class MyExtension implements BurpExtension {
         clearChatButton.addActionListener(e -> {
             chatHistory.clear();
             chatPane.setText("");
+            streamingMarkdown.setLength(0);
         });
 
         api.userInterface().registerSuiteTab("Chat POC", chatTab);
@@ -526,13 +531,30 @@ public class MyExtension implements BurpExtension {
         Style normal = chatPane.addStyle("normal", null);
 
         try {
+            insertMessageSeparator(doc);
             doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
-            doc.insertString(doc.getLength(), message + "\n\n", normal);
+            if (isModelSpeaker(speaker)) {
+                markdownRenderer.render(doc, message);
+                doc.insertString(doc.getLength(), "\n\n", normal);
+            } else {
+                doc.insertString(doc.getLength(), message + "\n\n", normal);
+            }
         } catch (BadLocationException e) {
             MAPI.getAPI().logging().logToOutput("appendChatMessage BadLocationException: " + e.getMessage());
         }
 
         chatPane.setCaretPosition(doc.getLength());
+    }
+
+    private void insertMessageSeparator(StyledDocument doc) throws BadLocationException {
+        if (doc.getLength() == 0) return;
+        SimpleAttributeSet sepStyle = new SimpleAttributeSet();
+        StyleConstants.setForeground(sepStyle, new Color(170, 170, 170));
+        doc.insertString(doc.getLength(), "\n" + "─".repeat(40) + "\n", sepStyle);
+    }
+
+    private boolean isModelSpeaker(String speaker) {
+        return !"You".equals(speaker) && !"System".equals(speaker);
     }
 
     private void installChatPopup(JTextPane chatPane, MontoyaApi api) {
@@ -610,21 +632,26 @@ public class MyExtension implements BurpExtension {
         return sb.toString();
     }
 
-    private String unescapeJsonString(String s, int startIdx) {
+    private static String unescapeJsonString(String s, int startIdx) {
         StringBuilder content = new StringBuilder();
         while (startIdx < s.length()) {
             char c = s.charAt(startIdx);
             if (c == '\\' && startIdx + 1 < s.length()) {
                 char next = s.charAt(startIdx + 1);
-                switch (next) {
-                    case '"' -> content.append('"');
-                    case '\\' -> content.append('\\');
-                    case 'n' -> content.append('\n');
-                    case 't' -> content.append('\t');
-                    case 'r' -> content.append('\r');
-                    default -> content.append(c).append(next);
+                if (next == 'u' && startIdx + 5 < s.length() && isHexDigits(s, startIdx + 2, 4)) {
+                    content.append((char) Integer.parseInt(s.substring(startIdx + 2, startIdx + 6), 16));
+                    startIdx += 6;
+                } else {
+                    switch (next) {
+                        case '"' -> content.append('"');
+                        case '\\' -> content.append('\\');
+                        case 'n' -> content.append('\n');
+                        case 't' -> content.append('\t');
+                        case 'r' -> content.append('\r');
+                        default -> content.append(c).append(next);
+                    }
+                    startIdx += 2;
                 }
-                startIdx += 2;
             } else if (c == '"') {
                 break;
             } else {
@@ -633,6 +660,15 @@ public class MyExtension implements BurpExtension {
             }
         }
         return content.toString();
+    }
+
+    private static boolean isHexDigits(String s, int start, int count) {
+        for (int i = start; i < start + count && i < s.length(); i++) {
+            char h = s.charAt(i);
+            boolean digit = (h >= '0' && h <= '9') || (h >= 'a' && h <= 'f') || (h >= 'A' && h <= 'F');
+            if (!digit) return false;
+        }
+        return true;
     }
 
     private String extractContentFromResponse(String body) {
@@ -756,21 +792,26 @@ public class MyExtension implements BurpExtension {
         Style bold = chatPane.addStyle("streamBold", null);
         StyleConstants.setBold(bold, true);
         try {
+            insertMessageSeparator(doc);
             doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
         } catch (BadLocationException e) {
             MAPI.getAPI().logging().logToOutput("startStreamingMessage BadLocationException: " + e.getMessage());
         }
+        streamingMarkdown.setLength(0);
+        streamingStartOffset = doc.getLength();
         chatPane.setCaretPosition(doc.getLength());
     }
 
     private void appendStreamingContent(JTextPane chatPane, String content) {
         StyledDocument doc = chatPane.getStyledDocument();
-        Style normal = chatPane.addStyle("streamNormal", null);
+        streamingMarkdown.append(content);
         try {
-            doc.insertString(doc.getLength(), content, normal);
+            doc.remove(streamingStartOffset, doc.getLength() - streamingStartOffset);
         } catch (BadLocationException e) {
             MAPI.getAPI().logging().logToOutput("appendStreamingContent BadLocationException: " + e.getMessage());
+            return;
         }
+        markdownRenderer.render(doc, streamingMarkdown.toString());
         chatPane.setCaretPosition(doc.getLength());
     }
 
@@ -782,6 +823,7 @@ public class MyExtension implements BurpExtension {
         } catch (BadLocationException e) {
             MAPI.getAPI().logging().logToOutput("finishStreamingMessage BadLocationException: " + e.getMessage());
         }
+        streamingMarkdown.setLength(0);
         chatPane.setCaretPosition(doc.getLength());
     }
 

@@ -4,6 +4,8 @@
     <root id="archive" name="burp-poc.jar">
       <element id="module-output" name="burp-poc" />
       <element id="extracted-dir" path="$MAVEN_REPOSITORY$/net/portswigger/burp/extensions/montoya-api/2026.4/montoya-api-2026.4.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/commonmark/commonmark/0.29.0/commonmark-0.29.0.jar" path-in-jar="/" />
+      <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/commonmark/commonmark-ext-gfm-tables/0.29.0/commonmark-ext-gfm-tables-0.29.0.jar" path-in-jar="/" />
     </root>
   </artifact>
 </component>
