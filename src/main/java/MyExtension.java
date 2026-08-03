@@ -17,6 +17,8 @@ import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
@@ -310,6 +312,7 @@ public class MyExtension implements BurpExtension {
         // chat history
         JTextPane chatPane = new JTextPane();
         chatPane.setEditable(false);
+        installChatPopup(chatPane, api);
 
         JScrollPane chatScroll = new JScrollPane(chatPane);
 
@@ -528,6 +531,57 @@ public class MyExtension implements BurpExtension {
         }
 
         chatPane.setCaretPosition(doc.getLength());
+    }
+
+    private void installChatPopup(JTextPane chatPane, MontoyaApi api) {
+        chatPane.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) {
+                if (e.isPopupTrigger()) showPopup(e, chatPane, api);
+            }
+
+            @Override
+            public void mouseReleased(MouseEvent e) {
+                if (e.isPopupTrigger()) showPopup(e, chatPane, api);
+            }
+        });
+    }
+
+    private void showPopup(MouseEvent e, JTextPane chatPane, MontoyaApi api) {
+        String selected = chatPane.getSelectedText();
+        if (selected == null || selected.isBlank()) return;
+
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem sendItem = new JMenuItem("Send to Repeater");
+        sendItem.addActionListener(ev -> sendSelectionToRepeater(chatPane, api, chatPane.getSelectedText()));
+        menu.add(sendItem);
+        menu.show(e.getComponent(), e.getX(), e.getY());
+    }
+
+    private void sendSelectionToRepeater(JTextPane chatPane, MontoyaApi api, String selected) {
+        if (selected == null) return;
+
+        String cleaned = stripCodeFences(selected);
+        try {
+            burp.api.montoya.http.message.requests.HttpRequest request =
+                    burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
+            api.repeater().sendToRepeater(request, "Chat POC");
+        } catch (IllegalArgumentException ex) {
+            appendChatMessage(chatPane, "System", "Invalid HTTP request selected: " + ex.getMessage());
+        }
+    }
+
+    private String stripCodeFences(String text) {
+        String s = text.trim();
+        if (s.startsWith("```")) {
+            int newline = s.indexOf('\n');
+            s = newline >= 0 ? s.substring(newline + 1) : "";
+        }
+        if (s.endsWith("```")) {
+            int lastNewline = s.lastIndexOf('\n');
+            s = lastNewline >= 0 ? s.substring(0, lastNewline) : "";
+        }
+        return s.trim();
     }
 
     private String readResponseBody(HttpResponse response) {
