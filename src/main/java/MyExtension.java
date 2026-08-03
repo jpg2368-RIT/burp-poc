@@ -24,6 +24,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 
 public class MyExtension implements BurpExtension {
@@ -507,6 +508,7 @@ public class MyExtension implements BurpExtension {
             chatPane.setText("");
             chatPane.getHighlighter().removeAllHighlights();
             streamingMarkdown.setLength(0);
+            markdownRenderer.clearAnchors();
         });
 
         api.userInterface().registerSuiteTab("Chat POC", chatTab);
@@ -631,7 +633,10 @@ public class MyExtension implements BurpExtension {
             public void mouseClicked(MouseEvent e) {
                 if (e.getButton() != MouseEvent.BUTTON1 || e.isPopupTrigger()) return;
                 String url = linkUrlAt(chatPane, e.getPoint());
-                if (url != null) openUrl(url);
+                if (url != null) {
+                    if (url.startsWith("#")) scrollToAnchor(chatPane, url.substring(1));
+                    else openUrl(url);
+                }
             }
         });
         chatPane.addMouseMotionListener(new MouseAdapter() {
@@ -654,7 +659,32 @@ public class MyExtension implements BurpExtension {
         int offset = chatPane.viewToModel2D(point);
         if (offset < 0 || offset >= doc.getLength()) return null;
         Object url = doc.getCharacterElement(offset).getAttributes().getAttribute(MarkdownRenderer.LINK_ATTR);
-        return url instanceof String s && isSafeLinkUrl(s) ? s : null;
+        return url instanceof String s ? s : null;
+    }
+
+    private static final int ANCHOR_SCROLL_MARGIN = 30;
+
+    private void scrollToAnchor(JTextPane chatPane, String slug) {
+        Map<String, Integer> anchors = markdownRenderer.anchorOffsets();
+        Integer offset = anchors.get(slug);
+        if (offset == null) {
+            MAPI.getAPI().logging().logToOutput("scrollToAnchor: no target for #" + slug);
+            return;
+        }
+        StyledDocument doc = chatPane.getStyledDocument();
+        if (offset < 0 || offset >= doc.getLength()) return;
+        chatPane.setCaretPosition(offset);
+        try {
+            Rectangle r = chatPane.modelToView2D(offset).getBounds();
+            JScrollPane sp = (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, chatPane);
+            if (sp != null) {
+                sp.getVerticalScrollBar().setValue(Math.max(0, r.y - ANCHOR_SCROLL_MARGIN));
+            } else {
+                chatPane.scrollRectToVisible(r);
+            }
+        } catch (BadLocationException ex) {
+            MAPI.getAPI().logging().logToOutput("scrollToAnchor BadLocationException: " + ex.getMessage());
+        }
     }
 
     static boolean isSafeLinkUrl(String url) {

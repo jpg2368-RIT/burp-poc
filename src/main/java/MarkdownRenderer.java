@@ -1,4 +1,5 @@
 import org.commonmark.ext.autolink.AutolinkExtension;
+import org.commonmark.ext.heading.anchor.IdGenerator;
 import org.commonmark.ext.gfm.tables.TableBlock;
 import org.commonmark.ext.gfm.tables.TableBody;
 import org.commonmark.ext.gfm.tables.TableCell;
@@ -37,19 +38,30 @@ import java.awt.Color;
 import java.awt.Font;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MarkdownRenderer extends AbstractVisitor {
     public static final String CODE_BLOCK_ATTR = "codeBlock";
     public static final String LINK_ATTR = "linkUrl";
     private Color linkColor = new Color(0, 90, 200);
 
+    private static final Pattern ANCHOR_OPEN = Pattern.compile("(?i)^<(a|span)\\b[^>]*\\b(?:id|name)\\s*=\\s*\"([^\"]+)\"[^>]*>$");
+    private static final Pattern ANCHOR_CLOSE = Pattern.compile("(?i)^</(a|span)>$");
+    private static final Pattern ANCHOR_PAIR = Pattern.compile("(?i)<(a|span)\\b[^>]*\\b(?:id|name)\\s*=\\s*\"([^\"]+)\"[^>]*></(?:a|span)>");
+
+    private final Map<String, Integer> anchorOffsets = new HashMap<>();
     private final Parser parser;
     private StyledDocument doc;
     private int baseFontSize = 12;
     private SimpleAttributeSet currentStyle = new SimpleAttributeSet();
     private int listDepth = 0;
     private final int[] orderedCounters = new int[8];
+    private IdGenerator idGen;
+    private String pendingAnchorClose;
 
     public MarkdownRenderer() {
         parser = Parser.builder()
@@ -61,11 +73,21 @@ public class MarkdownRenderer extends AbstractVisitor {
         if (color != null) linkColor = color;
     }
 
+    public Map<String, Integer> anchorOffsets() {
+        return new HashMap<>(anchorOffsets);
+    }
+
+    public void clearAnchors() {
+        anchorOffsets.clear();
+    }
+
     public void render(StyledDocument doc, String markdown) {
         if (markdown == null || markdown.isEmpty()) return;
         this.doc = doc;
         listDepth = 0;
         Arrays.fill(orderedCounters, 0);
+        idGen = IdGenerator.builder().build();
+        pendingAnchorClose = null;
         Node root = parser.parse(normalizeTables(markdown));
         root.accept(this);
     }
@@ -220,7 +242,25 @@ public class MarkdownRenderer extends AbstractVisitor {
 
     @Override
     public void visit(HtmlInline htmlInline) {
-        append(htmlInline.getLiteral());
+        String literal = htmlInline.getLiteral();
+        Matcher close = ANCHOR_CLOSE.matcher(literal);
+        if (close.matches()) {
+            if (pendingAnchorClose != null && pendingAnchorClose.equals(close.group(1).toLowerCase())) {
+                pendingAnchorClose = null;
+                return;
+            }
+            pendingAnchorClose = null;
+            append(literal);
+            return;
+        }
+        Matcher open = ANCHOR_OPEN.matcher(literal);
+        if (open.matches()) {
+            anchorOffsets.put(open.group(2), doc.getLength());
+            pendingAnchorClose = open.group(1).toLowerCase();
+            return;
+        }
+        pendingAnchorClose = null;
+        append(literal);
     }
 
     // ---------------------------------------------------------------
@@ -235,11 +275,16 @@ public class MarkdownRenderer extends AbstractVisitor {
 
     @Override
     public void visit(Heading heading) {
+        int start = doc.getLength();
         SimpleAttributeSet saved = pushStyle();
         StyleConstants.setBold(currentStyle, true);
         StyleConstants.setFontSize(currentStyle, headingSize(heading.getLevel()));
         visitChildren(heading);
         popStyle(saved);
+        String text = headingText(heading);
+        if (idGen != null && !text.isEmpty()) {
+            anchorOffsets.put(idGen.generateId(text), start);
+        }
         append("\n\n");
     }
 
@@ -300,6 +345,13 @@ public class MarkdownRenderer extends AbstractVisitor {
 
     @Override
     public void visit(HtmlBlock htmlBlock) {
+        String trimmed = htmlBlock.getLiteral().trim();
+        Matcher m = ANCHOR_PAIR.matcher(trimmed);
+        if (m.matches()) {
+            anchorOffsets.put(m.group(2), doc.getLength());
+            return;
+        }
+        pendingAnchorClose = null;
         append(htmlBlock.getLiteral());
         append("\n");
     }
@@ -411,6 +463,13 @@ public class MarkdownRenderer extends AbstractVisitor {
                 default -> collectText(child, sb);
             }
         }
+    }
+
+    private String headingText(Node heading) {
+        StringBuilder sb = new StringBuilder();
+        collectText(heading, sb);
+        String text = sb.toString().replaceAll("(?s)<[^>]+>", "");
+        return text.trim();
     }
 
     private SimpleAttributeSet pushStyle() {
