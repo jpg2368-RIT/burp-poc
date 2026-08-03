@@ -319,6 +319,10 @@ public class MyExtension implements BurpExtension {
         JTextPane chatPane = new JTextPane();
         chatPane.setEditable(false);
         installChatPopup(chatPane, api);
+        Color chatBg = chatPane.getBackground();
+        if (chatBg != null && (chatBg.getRed() + chatBg.getGreen() + chatBg.getBlue()) / 3 < 128) {
+            markdownRenderer.setLinkColor(new Color(110, 180, 255));
+        }
 
         JScrollPane chatScroll = new JScrollPane(chatPane);
 
@@ -622,7 +626,50 @@ public class MyExtension implements BurpExtension {
             public void mouseReleased(MouseEvent e) {
                 if (e.isPopupTrigger()) showPopup(e, chatPane, api);
             }
+
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if (e.getButton() != MouseEvent.BUTTON1 || e.isPopupTrigger()) return;
+                String url = linkUrlAt(chatPane, e.getPoint());
+                if (url != null) openUrl(url);
+            }
         });
+        chatPane.addMouseMotionListener(new MouseAdapter() {
+            @Override
+            public void mouseMoved(MouseEvent e) {
+                String url = linkUrlAt(chatPane, e.getPoint());
+                if (url != null) {
+                    chatPane.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+                    chatPane.setToolTipText(url);
+                } else {
+                    chatPane.setCursor(Cursor.getDefaultCursor());
+                    chatPane.setToolTipText(null);
+                }
+            }
+        });
+    }
+
+    private String linkUrlAt(JTextPane chatPane, Point point) {
+        StyledDocument doc = chatPane.getStyledDocument();
+        int offset = chatPane.viewToModel2D(point);
+        if (offset < 0 || offset >= doc.getLength()) return null;
+        Object url = doc.getCharacterElement(offset).getAttributes().getAttribute(MarkdownRenderer.LINK_ATTR);
+        return url instanceof String s && isSafeLinkUrl(s) ? s : null;
+    }
+
+    static boolean isSafeLinkUrl(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase();
+        return lower.startsWith("http://") || lower.startsWith("https://");
+    }
+
+    private void openUrl(String url) {
+        if (!isSafeLinkUrl(url)) return;
+        try {
+            Desktop.getDesktop().browse(URI.create(url));
+        } catch (Exception ex) {
+            MAPI.getAPI().logging().logToOutput("openUrl failed: " + ex.getMessage());
+        }
     }
 
     private void showPopup(MouseEvent e, JTextPane chatPane, MontoyaApi api) {

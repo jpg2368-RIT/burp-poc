@@ -1,3 +1,4 @@
+import org.commonmark.ext.autolink.AutolinkExtension;
 import org.commonmark.ext.gfm.tables.TableBlock;
 import org.commonmark.ext.gfm.tables.TableBody;
 import org.commonmark.ext.gfm.tables.TableCell;
@@ -40,7 +41,8 @@ import java.util.List;
 
 public class MarkdownRenderer extends AbstractVisitor {
     public static final String CODE_BLOCK_ATTR = "codeBlock";
-    private static final Color LINK_COLOR = new Color(0, 90, 200);
+    public static final String LINK_ATTR = "linkUrl";
+    private Color linkColor = new Color(0, 90, 200);
 
     private final Parser parser;
     private StyledDocument doc;
@@ -51,8 +53,12 @@ public class MarkdownRenderer extends AbstractVisitor {
 
     public MarkdownRenderer() {
         parser = Parser.builder()
-                .extensions(List.of(TablesExtension.create()))
+                .extensions(List.of(TablesExtension.create(), AutolinkExtension.create()))
                 .build();
+    }
+
+    public void setLinkColor(Color color) {
+        if (color != null) linkColor = color;
     }
 
     public void render(StyledDocument doc, String markdown) {
@@ -189,8 +195,9 @@ public class MarkdownRenderer extends AbstractVisitor {
     @Override
     public void visit(Link link) {
         SimpleAttributeSet saved = pushStyle();
-        StyleConstants.setForeground(currentStyle, LINK_COLOR);
+        StyleConstants.setForeground(currentStyle, linkColor);
         StyleConstants.setUnderline(currentStyle, true);
+        currentStyle.addAttribute(LINK_ATTR, link.getDestination());
         visitChildren(link);
         popStyle(saved);
     }
