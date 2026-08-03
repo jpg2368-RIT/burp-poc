@@ -20,6 +20,8 @@ import java.awt.event.ActionEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -565,10 +567,14 @@ public class MyExtension implements BurpExtension {
         try {
             burp.api.montoya.http.message.requests.HttpRequest request =
                     burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
-            api.repeater().sendToRepeater(request, "Chat POC");
+            api.repeater().sendToRepeater(request, repeaterTabCaption());
         } catch (IllegalArgumentException ex) {
             appendChatMessage(chatPane, "System", "Invalid HTTP request selected: " + ex.getMessage());
         }
+    }
+
+    private String repeaterTabCaption() {
+        return "From Chat [" + DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(LocalDateTime.now()) + "]";
     }
 
     private String stripCodeFences(String text) {
