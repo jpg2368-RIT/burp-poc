@@ -4,6 +4,7 @@ import burp.api.montoya.core.ByteArray;
 import burp.api.montoya.http.message.responses.HttpResponse;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
@@ -17,6 +18,8 @@ import javax.swing.event.DocumentListener;
 import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.ActionEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.nio.charset.StandardCharsets;
@@ -33,13 +36,17 @@ public class MyExtension implements BurpExtension {
     private final StringBuilder streamingMarkdown = new StringBuilder();
     private int streamingStartOffset = 0;
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
+    private int chatRunCounter = 0;
+    private int currentRunId = 0;
+    private boolean restoringSettings = false;
 
     @Override
     public void initialize(MontoyaApi api) {
         MAPI.initialize(api);
+        LogManager.initialize(api);
 
         api.extension().setName("Burp Suite POC Extension");
-        api.logging().logToOutput("Extension successfully loaded :)");
+        LogManager.info("Extension successfully loaded. Log level: " + LogManager.levelName());
 
         String hash = "";
         if (api.persistence().preferences().stringKeys().contains("hash")) {
@@ -190,13 +197,75 @@ public class MyExtension implements BurpExtension {
         resultScroll.setPreferredSize(new Dimension(0, 120));
         extPanel.add(resultScroll, gbc);
 
-        // vertical spacer to push content to top
+        // debug logging section title
+        gbc.gridx = 0;
         gbc.gridy = 8;
+        gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
+        gbc.weighty = 0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        gbc.insets = new Insets(10, 0, 6, 0);
+        JLabel debugTitle = new JLabel("Logging");
+        debugTitle.setFont(debugTitle.getFont().deriveFont(Font.BOLD, 14f));
+        extPanel.add(debugTitle, gbc);
+
+        gbc.insets = new Insets(6, 6, 6, 6);
+
+        // log level selector
+        gbc.gridx = 0;
+        gbc.gridy = 9;
+        gbc.gridwidth = 1;
+        gbc.weightx = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        JLabel logLevelLabel = new JLabel("Log Level:");
+        logLevelLabel.setPreferredSize(new Dimension(120, 24));
+        extPanel.add(logLevelLabel, gbc);
+
+        JComboBox<String> logLevelDropdown = new JComboBox<>(
+                new String[]{LogManager.LEVEL_OFF, LogManager.LEVEL_DEBUG, LogManager.LEVEL_TRACE});
+        logLevelDropdown.setSelectedItem(LogManager.levelName());
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        logLevelDropdown.setPreferredSize(new Dimension(300, 28));
+        extPanel.add(logLevelDropdown, gbc);
+
+        gbc.insets = new Insets(6, 6, 6, 6);
+
+        // log directory selection
+        gbc.gridx = 0;
+        gbc.gridy = 10;
+        gbc.gridwidth = 1;
+        gbc.weightx = 0;
+        gbc.weighty = 0;
+        gbc.fill = GridBagConstraints.NONE;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+        JLabel logDirLabel = new JLabel("Log Directory:");
+        logDirLabel.setPreferredSize(new Dimension(120, 24));
+        extPanel.add(logDirLabel, gbc);
+
+        JPanel logDirRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        logDirRow.setOpaque(false);
+        JTextField logDirField = new JTextField("");
+        logDirField.setPreferredSize(new Dimension(280, 28));
+        JButton browseLogButton = new JButton("Browse...");
+        logDirRow.add(logDirField);
+        logDirRow.add(browseLogButton);
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        extPanel.add(logDirRow, gbc);
+
+        // vertical spacer to push content to top
+        gbc.gridy = 11;
         gbc.weighty = 1.0;
         gbc.fill = GridBagConstraints.BOTH;
         extPanel.add(Box.createGlue(), gbc);
 
         // load saved settings
+        restoringSettings = true;
         if (api.persistence().preferences().stringKeys().contains("apiEndpointType")) {
             apiEndpointDropdown.setSelectedItem(api.persistence().preferences().getString("apiEndpointType"));
         }
@@ -209,12 +278,58 @@ public class MyExtension implements BurpExtension {
         if (api.persistence().preferences().stringKeys().contains("streamEnabled")) {
             streamingCheckbox.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
         }
+        if (api.persistence().preferences().stringKeys().contains("logLevel")) {
+            logLevelDropdown.setSelectedItem(api.persistence().preferences().getString("logLevel"));
+        } else if (api.persistence().preferences().stringKeys().contains("debugEnabled")
+                && api.persistence().preferences().getString("debugEnabled").equals("true")) {
+            logLevelDropdown.setSelectedItem(LogManager.LEVEL_DEBUG);
+        }
+        if (api.persistence().preferences().stringKeys().contains("logDir")) {
+            logDirField.setText(api.persistence().preferences().getString("logDir"));
+        }
+        restoringSettings = false;
 
         // auto-save on any setting change
-        Runnable autoSave = () -> saveSettings(api, apiEndpointDropdown, endpointField, apiKeyField, streamingCheckbox);
+        Runnable autoSave = () -> {
+            if (restoringSettings) return;
+            saveSettings(api, apiEndpointDropdown, endpointField, apiKeyField,
+                    streamingCheckbox, logLevelDropdown, logDirField);
+        };
 
         apiEndpointDropdown.addActionListener(e -> autoSave.run());
         streamingCheckbox.addActionListener(e -> autoSave.run());
+        logLevelDropdown.addActionListener(e -> {
+            LogManager.setLogLevel((String) logLevelDropdown.getSelectedItem());
+            autoSave.run();
+        });
+        logDirField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) { autoSave.run(); }
+            @Override
+            public void removeUpdate(DocumentEvent e) { autoSave.run(); }
+            @Override
+            public void changedUpdate(DocumentEvent e) { autoSave.run(); }
+        });
+        logDirField.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                LogManager.setLogDirectory(logDirField.getText());
+            }
+        });
+        browseLogButton.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            String current = logDirField.getText();
+            if (!current.isBlank()) {
+                File f = new File(current);
+                if (f.isDirectory()) chooser.setCurrentDirectory(f);
+            }
+            if (chooser.showOpenDialog(extPanel) == JFileChooser.APPROVE_OPTION) {
+                logDirField.setText(chooser.getSelectedFile().getAbsolutePath());
+                LogManager.setLogDirectory(chooser.getSelectedFile().getAbsolutePath());
+                autoSave.run();
+            }
+        });
 
         endpointField.getDocument().addDocumentListener(new DocumentListener() {
             @Override
@@ -245,7 +360,8 @@ public class MyExtension implements BurpExtension {
                 for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
                     allHeaders.append(header.name()).append(": ").append(header.value()).append("\n");
                 }
-                api.logging().logToOutput("Rate limit check - HTTP " + response.statusCode() + "\nHeaders:\n" + allHeaders);
+                LogManager.info("Rate limit check - HTTP " + response.statusCode());
+                LogManager.debug("Rate limit headers:\n" + allHeaders);
 
                 String limit = null, remaining = null, reset = null;
                 for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
@@ -280,7 +396,7 @@ public class MyExtension implements BurpExtension {
                 } else {
                     resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                 }
-                api.logging().logToOutput("List models - HTTP " + response.statusCode());
+                LogManager.debug("List models done - HTTP " + response.statusCode());
             });
         });
 
@@ -306,7 +422,7 @@ public class MyExtension implements BurpExtension {
                 } else {
                     resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                 }
-                api.logging().logToOutput("Test chat - HTTP " + response.statusCode());
+                LogManager.debug("Test chat done - HTTP " + response.statusCode());
             });
         });
 
@@ -413,6 +529,8 @@ public class MyExtension implements BurpExtension {
             String model = (String) modelDropdown.getSelectedItem();
             if (model == null || model.isEmpty()) return;
 
+            currentRunId = ++chatRunCounter;
+
             appendChatMessage(chatPane, "You", text);
             chatHistory.add(new String[]{"user", text});
 
@@ -456,9 +574,10 @@ public class MyExtension implements BurpExtension {
                         return;
                     }
 
-                    api.logging().logToOutput("Chat request body:\n" + requestBody + "\nStreaming: " + streaming);
+                    LogManager.debug("Chat request body:\n" + requestBody);
 
                     String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
+                    LogManager.info("Chat request to " + baseUrl + "/v1/chat/completions (streaming=" + streaming + ")");
 
                     if (streaming) {
                         sendChatStreaming(apiKey, baseUrl, requestBody, model, chatPane, chatHistory,
@@ -478,15 +597,20 @@ public class MyExtension implements BurpExtension {
                                 String body = readResponseBody(response);
                                 String content = extractContentFromResponse(body);
                                 if (content != null) {
+                                    LogManager.debug("Chat response (run #" + currentRunId + "): "
+                                            + content.length() + " chars");
                                     appendChatMessage(chatPane, model, content);
                                     chatHistory.add(new String[]{"assistant", content});
                                 } else {
+                                    LogManager.error("Chat response parse failed, body:\n" + body);
                                     appendChatMessage(chatPane, "System", "Could not parse response content.\n" + body);
                                 }
                             } else {
+                                LogManager.error("Chat request HTTP " + response.statusCode() + ": " + readResponseBody(response));
                                 appendChatMessage(chatPane, "System", "HTTP " + response.statusCode() + "\n" + readResponseBody(response));
                             }
                         } catch (Exception ex) {
+                            LogManager.error("Chat request failed: " + ex.getMessage());
                             appendChatMessage(chatPane, "System", "Error - " + ex.getMessage());
                         }
                     }
@@ -504,6 +628,7 @@ public class MyExtension implements BurpExtension {
         refreshModelsButton.addActionListener(e -> new Thread(() -> refreshModels(modelDropdown, api)).start());
 
         clearChatButton.addActionListener(e -> {
+            LogManager.debug("Chat cleared by user");
             chatHistory.clear();
             chatPane.setText("");
             chatPane.getHighlighter().removeAllHighlights();
@@ -531,6 +656,8 @@ public class MyExtension implements BurpExtension {
     }
 
     private void appendChatMessage(JTextPane chatPane, String speaker, String message) {
+        LogManager.debug("appendChatMessage: (run #" + currentRunId + ") speaker=" + speaker + ", "
+                + message.length() + " chars");
         StyledDocument doc = chatPane.getStyledDocument();
 
         Style bold = chatPane.addStyle("bold", null);
@@ -548,7 +675,7 @@ public class MyExtension implements BurpExtension {
                 doc.insertString(doc.getLength(), message + "\n\n", normal);
             }
         } catch (BadLocationException e) {
-            MAPI.getAPI().logging().logToOutput("appendChatMessage BadLocationException: " + e.getMessage());
+            LogManager.error("appendChatMessage BadLocationException: " + e.getMessage());
         }
 
         chatPane.setCaretPosition(doc.getLength());
@@ -582,7 +709,7 @@ public class MyExtension implements BurpExtension {
                 i = end;
             }
         } catch (BadLocationException e) {
-            MAPI.getAPI().logging().logToOutput("refreshCodeBoxes BadLocationException: " + e.getMessage());
+            LogManager.error("refreshCodeBoxes BadLocationException: " + e.getMessage());
         }
     }
 
@@ -608,7 +735,7 @@ public class MyExtension implements BurpExtension {
                 g2.drawRect(1, r.y, c.getWidth() - 2, r.height - 1);
                 g2.dispose();
             } catch (BadLocationException e) {
-                MAPI.getAPI().logging().logToOutput("CodeBoxPainter BadLocationException: " + e.getMessage());
+                LogManager.error("CodeBoxPainter BadLocationException: " + e.getMessage());
             }
         }
     }
@@ -634,6 +761,7 @@ public class MyExtension implements BurpExtension {
                 if (e.getButton() != MouseEvent.BUTTON1 || e.isPopupTrigger()) return;
                 String url = linkUrlAt(chatPane, e.getPoint());
                 if (url != null) {
+                    LogManager.debug("Link clicked: " + url + (url.startsWith("#") ? " (anchor)" : " (external)"));
                     if (url.startsWith("#")) scrollToAnchor(chatPane, url.substring(1));
                     else openUrl(url);
                 }
@@ -668,11 +796,15 @@ public class MyExtension implements BurpExtension {
         Map<String, Integer> anchors = markdownRenderer.anchorOffsets();
         Integer offset = anchors.get(slug);
         if (offset == null) {
-            MAPI.getAPI().logging().logToOutput("scrollToAnchor: no target for #" + slug);
+            LogManager.debug("scrollToAnchor: no target for #" + slug);
             return;
         }
         StyledDocument doc = chatPane.getStyledDocument();
-        if (offset < 0 || offset >= doc.getLength()) return;
+        if (offset < 0 || offset >= doc.getLength()) {
+            LogManager.debug("scrollToAnchor: offset " + offset + " out of range for #" + slug);
+            return;
+        }
+        LogManager.debug("scrollToAnchor: #" + slug + " -> doc offset " + offset);
         chatPane.setCaretPosition(offset);
         try {
             Rectangle r = chatPane.modelToView2D(offset).getBounds();
@@ -683,7 +815,7 @@ public class MyExtension implements BurpExtension {
                 chatPane.scrollRectToVisible(r);
             }
         } catch (BadLocationException ex) {
-            MAPI.getAPI().logging().logToOutput("scrollToAnchor BadLocationException: " + ex.getMessage());
+            LogManager.error("scrollToAnchor BadLocationException: " + ex.getMessage());
         }
     }
 
@@ -698,7 +830,7 @@ public class MyExtension implements BurpExtension {
         try {
             Desktop.getDesktop().browse(URI.create(url));
         } catch (Exception ex) {
-            MAPI.getAPI().logging().logToOutput("openUrl failed: " + ex.getMessage());
+            LogManager.error("openUrl failed: " + ex.getMessage());
         }
     }
 
@@ -717,11 +849,13 @@ public class MyExtension implements BurpExtension {
         if (selected == null) return;
 
         String cleaned = stripCodeFences(selected);
+        LogManager.debug("sendSelectionToRepeater: " + cleaned.length() + " chars, tab=\"" + repeaterTabCaption() + "\"");
         try {
             burp.api.montoya.http.message.requests.HttpRequest request =
                     burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
             api.repeater().sendToRepeater(request, repeaterTabCaption());
         } catch (IllegalArgumentException ex) {
+            LogManager.error("sendSelectionToRepeater: " + ex.getMessage());
             appendChatMessage(chatPane, "System", "Invalid HTTP request selected: " + ex.getMessage());
         }
     }
@@ -834,6 +968,7 @@ public class MyExtension implements BurpExtension {
 
             if (rawResponse.statusCode() != 200) {
                 String errorBody = new String(rawResponse.body().readAllBytes(), StandardCharsets.UTF_8);
+                LogManager.error("Stream HTTP " + rawResponse.statusCode() + ": " + errorBody);
                 SwingUtilities.invokeLater(() -> {
                     appendChatMessage(chatPane, "System", "HTTP " + rawResponse.statusCode() + "\n" + errorBody);
                     cleanupChatControls(chatProgress, sendButton, inputBox);
@@ -841,12 +976,15 @@ public class MyExtension implements BurpExtension {
                 return;
             }
 
+            LogManager.debug("sendChatStreaming: stream opened, awaiting SSE data");
+
             try (InputStream is = rawResponse.body();
                  BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
 
                 StringBuilder fullContent = new StringBuilder();
                 String line;
                 boolean firstChunk = true;
+                int chunkCount = 0;
 
                 while ((line = reader.readLine()) != null) {
                     if (line.startsWith("data: ")) {
@@ -863,11 +1001,16 @@ public class MyExtension implements BurpExtension {
                                 });
                             }
                             fullContent.append(delta);
+                            chunkCount++;
+                            LogManager.debug("SSE delta +" + delta.length() + " chars (chunk " + chunkCount
+                                    + ", total " + fullContent.length() + ")");
                             SwingUtilities.invokeLater(() -> appendStreamingContent(chatPane, delta));
                         }
                     }
                 }
 
+                LogManager.debug("Stream finished (run #" + currentRunId + "): " + chunkCount + " chunks, "
+                        + fullContent.length() + " chars total");
                 chatHistory.add(new String[]{"assistant", fullContent.toString()});
                 SwingUtilities.invokeLater(() -> {
                     finishStreamingMessage(chatPane);
@@ -876,6 +1019,7 @@ public class MyExtension implements BurpExtension {
             }
 
         } catch (Exception ex) {
+            LogManager.error("sendChatStreaming exception: " + ex.getMessage());
             SwingUtilities.invokeLater(() -> {
                 appendChatMessage(chatPane, "System", "Error - " + ex.getMessage());
                 cleanupChatControls(chatProgress, sendButton, inputBox);
@@ -890,12 +1034,15 @@ public class MyExtension implements BurpExtension {
     }
 
     private void saveSettings(MontoyaApi api, JComboBox<String> endpointDropdown,
-            JTextField endpointField, JPasswordField apiKeyField, JCheckBox streamingCheckbox) {
+            JTextField endpointField, JPasswordField apiKeyField, JCheckBox streamingCheckbox,
+            JComboBox<String> logLevelDropdown, JTextField logDirField) {
         api.persistence().preferences().setString("apiEndpointType", (String) endpointDropdown.getSelectedItem());
         api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
         api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
         api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingCheckbox.isSelected()));
-        api.logging().logToOutput("Settings auto-saved.");
+        api.persistence().preferences().setString("logLevel", (String) logLevelDropdown.getSelectedItem());
+        api.persistence().preferences().setString("logDir", logDirField.getText());
+        LogManager.info("Settings auto-saved.");
     }
 
     private void runSettingsTest(String endpoint, String apiKey, JTextArea resultArea,
@@ -926,20 +1073,24 @@ public class MyExtension implements BurpExtension {
             insertMessageSpacing(doc);
             doc.insertString(doc.getLength(), "[" + speaker + "]:\n", bold);
         } catch (BadLocationException e) {
-            MAPI.getAPI().logging().logToOutput("startStreamingMessage BadLocationException: " + e.getMessage());
+            LogManager.error("startStreamingMessage BadLocationException: " + e.getMessage());
         }
         streamingMarkdown.setLength(0);
         streamingStartOffset = doc.getLength();
+        LogManager.debug("startStreamingMessage: (run #" + currentRunId + ") speaker=" + speaker
+                + ", startOffset=" + streamingStartOffset);
         chatPane.setCaretPosition(doc.getLength());
     }
 
     private void appendStreamingContent(JTextPane chatPane, String content) {
+        LogManager.debug("appendStreamingContent: +" + content.length() + " chars (total markdown "
+                + (streamingMarkdown.length() + content.length()) + ")");
         StyledDocument doc = chatPane.getStyledDocument();
         streamingMarkdown.append(content);
         try {
             doc.remove(streamingStartOffset, doc.getLength() - streamingStartOffset);
         } catch (BadLocationException e) {
-            MAPI.getAPI().logging().logToOutput("appendStreamingContent BadLocationException: " + e.getMessage());
+            LogManager.error("appendStreamingContent BadLocationException: " + e.getMessage());
             return;
         }
         markdownRenderer.render(doc, streamingMarkdown.toString());
@@ -953,9 +1104,10 @@ public class MyExtension implements BurpExtension {
         try {
             doc.insertString(doc.getLength(), "\n\n", normal);
         } catch (BadLocationException e) {
-            MAPI.getAPI().logging().logToOutput("finishStreamingMessage BadLocationException: " + e.getMessage());
+            LogManager.error("finishStreamingMessage BadLocationException: " + e.getMessage());
         }
         streamingMarkdown.setLength(0);
+        LogManager.debug("finishStreamingMessage: (run #" + currentRunId + ") doc length=" + doc.getLength());
         chatPane.setCaretPosition(doc.getLength());
     }
 
@@ -1002,8 +1154,9 @@ public class MyExtension implements BurpExtension {
                     }
                 }
             }
+            LogManager.debug("refreshModels: loaded " + modelDropdown.getItemCount() + " models");
         } catch (Exception ex) {
-            api.logging().logToOutput("Failed to refresh models: " + ex.getMessage());
+            LogManager.error("Failed to refresh models: " + ex.getMessage());
         }
     }
 }

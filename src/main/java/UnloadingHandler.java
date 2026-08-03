@@ -9,6 +9,10 @@ public class UnloadingHandler implements ExtensionUnloadingHandler {
 
     @Override
     public void extensionUnloaded() {
-        MAPI.getAPI().persistence().preferences().setString("hash", this.handler.getHash());
+        if (MAPI.getAPI() != null) {
+            LogManager.info("Extension unloading; saving hash=" + this.handler.getHash());
+            MAPI.getAPI().persistence().preferences().setString("hash", this.handler.getHash());
+        }
+        LogManager.close();
     }
 }

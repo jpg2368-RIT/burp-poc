@@ -78,18 +78,27 @@ public class MarkdownRenderer extends AbstractVisitor {
     }
 
     public void clearAnchors() {
+        LogManager.trace("clearAnchors()");
         anchorOffsets.clear();
     }
 
     public void render(StyledDocument doc, String markdown) {
-        if (markdown == null || markdown.isEmpty()) return;
+        if (markdown == null || markdown.isEmpty()) {
+            LogManager.debug("render(): empty input, skip");
+            return;
+        }
+        LogManager.debug("render(): " + markdown.length() + " chars");
         this.doc = doc;
         listDepth = 0;
         Arrays.fill(orderedCounters, 0);
         idGen = IdGenerator.builder().build();
         pendingAnchorClose = null;
+        long startNanos = System.nanoTime();
         Node root = parser.parse(normalizeTables(markdown));
         root.accept(this);
+        long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+        LogManager.debug("render(): parsed+visited in " + elapsedMs + " ms, anchors=" + anchorOffsets.size()
+                + ", doc length=" + doc.getLength());
     }
 
     // ---------------------------------------------------------------
@@ -101,6 +110,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         String[] lines = markdown.split("\n", -1);
         List<String> out = new ArrayList<>();
         boolean inFence = false;
+        int tablesRepaired = 0;
         int i = 0;
         while (i < lines.length) {
             String line = lines[i];
@@ -126,12 +136,18 @@ public class MarkdownRenderer extends AbstractVisitor {
                 out.add(header);
                 out.add(delimiterFor(header));
                 out.addAll(Arrays.asList(lines).subList(i + 1, runEnd));
+                tablesRepaired++;
             } else {
                 out.addAll(Arrays.asList(lines).subList(i, runEnd));
             }
             i = runEnd;
         }
-        return String.join("\n", out);
+        String result = String.join("\n", out);
+        if (tablesRepaired > 0) {
+            LogManager.debug("normalizeTables: repaired " + tablesRepaired + " pipe tables ("
+                    + lines.length + " lines -> " + out.size() + " lines)");
+        }
+        return result;
     }
 
     private boolean isPipeLine(String line) {
@@ -220,6 +236,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         StyleConstants.setForeground(currentStyle, linkColor);
         StyleConstants.setUnderline(currentStyle, true);
         currentStyle.addAttribute(LINK_ATTR, link.getDestination());
+        LogManager.trace("render link: " + link.getDestination());
         visitChildren(link);
         popStyle(saved);
     }
@@ -257,6 +274,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         if (open.matches()) {
             anchorOffsets.put(open.group(2), doc.getLength());
             pendingAnchorClose = open.group(1).toLowerCase();
+            LogManager.trace("Anchor registered: id=\"" + open.group(2) + "\" at offset " + doc.getLength());
             return;
         }
         pendingAnchorClose = null;
@@ -282,9 +300,13 @@ public class MarkdownRenderer extends AbstractVisitor {
         visitChildren(heading);
         popStyle(saved);
         String text = headingText(heading);
+        String id = null;
         if (idGen != null && !text.isEmpty()) {
-            anchorOffsets.put(idGen.generateId(text), start);
+            id = idGen.generateId(text);
+            anchorOffsets.put(id, start);
         }
+        LogManager.trace("Heading level " + heading.getLevel() + ": \"" + text + "\""
+                + (id != null ? " (id=" + id + " at offset " + start + ")" : ""));
         append("\n\n");
     }
 
@@ -349,6 +371,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         Matcher m = ANCHOR_PAIR.matcher(trimmed);
         if (m.matches()) {
             anchorOffsets.put(m.group(2), doc.getLength());
+            LogManager.trace("Anchor pair registered: id=\"" + m.group(2) + "\" at offset " + doc.getLength());
             return;
         }
         pendingAnchorClose = null;
@@ -432,13 +455,14 @@ public class MarkdownRenderer extends AbstractVisitor {
     //  helpers
     // ---------------------------------------------------------------
 
-    private void codeBlock(String literal) {
+private void codeBlock(String literal) {
         append("\n");
         SimpleAttributeSet saved = pushStyle();
         StyleConstants.setFontFamily(currentStyle, Font.MONOSPACED);
         currentStyle.addAttribute(CODE_BLOCK_ATTR, Boolean.TRUE);
         String content = literal == null ? "" : literal;
         if (!content.isEmpty() && !content.endsWith("\n")) content += "\n";
+        LogManager.trace("Code block: " + content.length() + " chars");
         append(content);
         popStyle(saved);
         append("\n\n");
@@ -487,7 +511,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         try {
             doc.insertString(doc.getLength(), text, currentStyle);
         } catch (BadLocationException e) {
-            MAPI.getAPI().logging().logToOutput("MarkdownRenderer BadLocationException: " + e.getMessage());
+            LogManager.error("MarkdownRenderer BadLocationException: " + e.getMessage());
         }
     }
 }

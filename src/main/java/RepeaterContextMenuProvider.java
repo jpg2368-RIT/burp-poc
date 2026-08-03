@@ -20,10 +20,15 @@ public class RepeaterContextMenuProvider implements ContextMenuItemsProvider {
         }
 
         String requestText = getRequestText(event);
-        if (requestText == null) return items;
+        if (requestText == null) {
+            LogManager.debug("RepeaterContextMenuProvider: no request text available, skipping menu");
+            return items;
+        }
+        LogManager.debug("RepeaterContextMenuProvider: menu shown, request=" + requestText.length() + " chars");
 
         JMenuItem menuItem = new JMenuItem("Send to POC Chat");
         menuItem.addActionListener(e -> SwingUtilities.invokeLater(() -> {
+            LogManager.debug("RepeaterContextMenuProvider: sending request to chat input box");
             if (MyExtension.chatInputBox != null) {
                 MyExtension.chatInputBox.setText("Here is a request from the Repeater tab of Burp Suite from the user:\n```\n" + requestText + "\n```\n");
             }
