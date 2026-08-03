@@ -501,6 +501,7 @@ public class MyExtension implements BurpExtension {
         clearChatButton.addActionListener(e -> {
             chatHistory.clear();
             chatPane.setText("");
+            chatPane.getHighlighter().removeAllHighlights();
             streamingMarkdown.setLength(0);
         });
 
@@ -531,10 +532,11 @@ public class MyExtension implements BurpExtension {
         Style normal = chatPane.addStyle("normal", null);
 
         try {
-            insertMessageSeparator(doc);
-            doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
+            insertMessageSpacing(doc);
+            doc.insertString(doc.getLength(), "[" + speaker + "]:\n", bold);
             if (isModelSpeaker(speaker)) {
                 markdownRenderer.render(doc, message);
+                refreshCodeBoxes(chatPane);
                 doc.insertString(doc.getLength(), "\n\n", normal);
             } else {
                 doc.insertString(doc.getLength(), message + "\n\n", normal);
@@ -546,11 +548,63 @@ public class MyExtension implements BurpExtension {
         chatPane.setCaretPosition(doc.getLength());
     }
 
-    private void insertMessageSeparator(StyledDocument doc) throws BadLocationException {
+    private void insertMessageSpacing(StyledDocument doc) throws BadLocationException {
         if (doc.getLength() == 0) return;
-        SimpleAttributeSet sepStyle = new SimpleAttributeSet();
-        StyleConstants.setForeground(sepStyle, new Color(170, 170, 170));
-        doc.insertString(doc.getLength(), "\n" + "─".repeat(40) + "\n", sepStyle);
+        doc.insertString(doc.getLength(), "\n", null);
+    }
+
+    private void refreshCodeBoxes(JTextPane chatPane) {
+        StyledDocument doc = chatPane.getStyledDocument();
+        chatPane.getHighlighter().removeAllHighlights();
+        try {
+            int len = doc.getLength();
+            int i = 0;
+            while (i < len) {
+                Element el = doc.getCharacterElement(i);
+                boolean isCode = el.getAttributes().isDefined(MarkdownRenderer.CODE_BLOCK_ATTR);
+                int end = el.getEndOffset();
+                if (isCode) {
+                    while (end < len) {
+                        Element next = doc.getCharacterElement(end);
+                        if (!next.getAttributes().isDefined(MarkdownRenderer.CODE_BLOCK_ATTR)) break;
+                        end = next.getEndOffset();
+                    }
+                    if (end > i) {
+                        chatPane.getHighlighter().addHighlight(i, end, codeBoxPainter);
+                    }
+                }
+                i = end;
+            }
+        } catch (BadLocationException e) {
+            MAPI.getAPI().logging().logToOutput("refreshCodeBoxes BadLocationException: " + e.getMessage());
+        }
+    }
+
+    private static final CodeBoxPainter codeBoxPainter = new CodeBoxPainter();
+
+    private static class CodeBoxPainter implements Highlighter.HighlightPainter {
+        private static final Color BOX_BORDER = new Color(140, 140, 140);
+
+        @Override
+        public void paint(Graphics g, int p0, int p1, Shape bounds, JTextComponent c) {
+            if (p1 <= p0) return;
+            try {
+                Rectangle start = c.modelToView(p0);
+                Rectangle end = c.modelToView(p1 - 1);
+                if (start == null || end == null) return;
+                Rectangle r = new Rectangle(start);
+                r.add(end);
+                r.grow(3, 3);
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.setColor(c.getBackground().darker());
+                g2.fillRect(0, r.y, c.getWidth(), r.height);
+                g2.setColor(BOX_BORDER);
+                g2.drawRect(1, r.y, c.getWidth() - 2, r.height - 1);
+                g2.dispose();
+            } catch (BadLocationException e) {
+                MAPI.getAPI().logging().logToOutput("CodeBoxPainter BadLocationException: " + e.getMessage());
+            }
+        }
     }
 
     private boolean isModelSpeaker(String speaker) {
@@ -792,8 +846,8 @@ public class MyExtension implements BurpExtension {
         Style bold = chatPane.addStyle("streamBold", null);
         StyleConstants.setBold(bold, true);
         try {
-            insertMessageSeparator(doc);
-            doc.insertString(doc.getLength(), "[" + speaker + "]: ", bold);
+            insertMessageSpacing(doc);
+            doc.insertString(doc.getLength(), "[" + speaker + "]:\n", bold);
         } catch (BadLocationException e) {
             MAPI.getAPI().logging().logToOutput("startStreamingMessage BadLocationException: " + e.getMessage());
         }
@@ -812,6 +866,7 @@ public class MyExtension implements BurpExtension {
             return;
         }
         markdownRenderer.render(doc, streamingMarkdown.toString());
+        refreshCodeBoxes(chatPane);
         chatPane.setCaretPosition(doc.getLength());
     }
 
