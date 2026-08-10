@@ -16,9 +16,9 @@ import java.util.Optional;
  *
  * <p>The menu item copies the displayed request into the chat input box and
  * stores the request's {@link HttpService} in {@link MyExtension#lastRepeaterService}.
- * The stored service is later used by
- * {@link MyExtension#sendSelectionToRepeater} to set the target on requests
- * sent back to Repeater from the chat panel.</p>
+ * The stored service is later used by {@code sendSelectionToRepeater} in
+ * MyExtension to set the target on requests sent back to Repeater from the
+ * chat panel.</p>
  *
  * <p>Keep the stored service sticky across menu invocations: each "Send to POC
  * Chat" click overwrites the previous value, and the value stays until the next
@@ -69,9 +69,6 @@ public class RepeaterContextMenuProvider implements ContextMenuItemsProvider {
 
     /**
      * Pairs a request's text with its original {@link HttpService}.
-     *
-     * @param requestText the request text to copy into the chat input box
-     * @param service     the request's service; may be null
      */
     private static class RequestAndService {
         /** The request text to copy into the chat input box. */

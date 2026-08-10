@@ -383,7 +383,7 @@ public class MyExtension implements BurpExtension {
             String endpoint = endpointField.getText().strip();
             String apiKey = new String(apiKeyField.getPassword()).strip();
             runSettingsTest(endpoint, apiKey, resultArea, "Checking rate limit...", () -> {
-                HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
+                HttpResponse response = sendApiRequest(api, endpoint, apiKey);
 
                 StringBuilder allHeaders = new StringBuilder();
                 for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
@@ -418,7 +418,7 @@ public class MyExtension implements BurpExtension {
             String endpoint = endpointField.getText().strip();
             String apiKey = new String(apiKeyField.getPassword()).strip();
             runSettingsTest(endpoint, apiKey, resultArea, "Fetching models...", () -> {
-                HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
+                HttpResponse response = sendApiRequest(api, endpoint, apiKey);
 
                 if (response.statusCode() == 200) {
                     resultArea.setText(response.bodyToString());
@@ -678,19 +678,19 @@ public class MyExtension implements BurpExtension {
      * response.
      *
      * <p>Used by the settings-testing tools and the model list refresh. The
-     * request is built from the endpoint base URL with the trailing version
-     * segment and slashes removed.</p>
+     * request always targets the {@code /v1/models} endpoint, built from the
+     * endpoint base URL with the trailing version segment and slashes
+     * removed.</p>
      *
      * @param api      the Montoya API instance
      * @param endpoint the endpoint base URL, e.g. {@code https://api.example.com/v1}
      * @param apiKey   the API key for the Authorization header
-     * @param path     the API path to request, e.g. {@code /v1/models}
      * @return the HTTP response
      */
-    private HttpResponse sendApiRequest(MontoyaApi api, String endpoint, String apiKey, String path) {
+    private HttpResponse sendApiRequest(MontoyaApi api, String endpoint, String apiKey) {
         String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
         burp.api.montoya.http.message.requests.HttpRequest request =
-                burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + path)
+                burp.api.montoya.http.message.requests.HttpRequest.httpRequestFromUrl(baseUrl + "/v1/models")
                         .withMethod("GET")
                         .withHeader("Authorization", "Bearer " + apiKey);
 
@@ -804,9 +804,11 @@ public class MyExtension implements BurpExtension {
         public void paint(Graphics g, int p0, int p1, Shape bounds, JTextComponent c) {
             if (p1 <= p0) return;
             try {
-                Rectangle start = c.modelToView(p0);
-                Rectangle end = c.modelToView(p1 - 1);
-                if (start == null || end == null) return;
+                java.awt.geom.Rectangle2D start2d = c.modelToView2D(p0);
+                java.awt.geom.Rectangle2D end2d = c.modelToView2D(p1 - 1);
+                if (start2d == null || end2d == null) return;
+                Rectangle start = start2d.getBounds();
+                Rectangle end = end2d.getBounds();
                 Rectangle r = new Rectangle(start);
                 r.add(end);
                 r.grow(3, 3);
@@ -1008,7 +1010,7 @@ public class MyExtension implements BurpExtension {
             burp.api.montoya.http.message.requests.HttpRequest request =
                     burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
 
-            burp.api.montoya.http.HttpService service = null;
+            burp.api.montoya.http.HttpService service;
             String targetSource = null;
             if (MyExtension.lastRepeaterService != null) {
                 service = MyExtension.lastRepeaterService;
@@ -1045,7 +1047,7 @@ public class MyExtension implements BurpExtension {
             Pattern.compile("(?im)^[ \\t]*Host:[ \\t]*([^\\r\\n]+)");
 
     /**
-     * Parses an {@link HttpService} from the {@code Host:} header of a text.
+     * Parses an {@link burp.api.montoya.http.HttpService} from the {@code Host:} header of a text.
      *
      * <p>Supports IPv4, hostnames, and bracketed IPv6, each with an optional
      * port. A missing port defaults to 80; port 443 implies https. The value
@@ -1202,7 +1204,7 @@ public class MyExtension implements BurpExtension {
             char c = s.charAt(startIdx);
             if (c == '\\' && startIdx + 1 < s.length()) {
                 char next = s.charAt(startIdx + 1);
-                if (next == 'u' && startIdx + 5 < s.length() && isHexDigits(s, startIdx + 2, 4)) {
+                if (next == 'u' && startIdx + 5 < s.length() && isHexDigits(s, startIdx + 2)) {
                     content.append((char) Integer.parseInt(s.substring(startIdx + 2, startIdx + 6), 16));
                     startIdx += 6;
                 } else {
@@ -1227,15 +1229,14 @@ public class MyExtension implements BurpExtension {
     }
 
     /**
-     * Checks whether a range of characters are all hexadecimal digits.
+     * Checks whether the next four characters are all hexadecimal digits.
      *
      * @param s     the text to check
      * @param start the start index
-     * @param count the number of characters to check
-     * @return true when all characters in the range are hex digits
+     * @return true when all four characters in the range are hex digits
      */
-    private static boolean isHexDigits(String s, int start, int count) {
-        for (int i = start; i < start + count && i < s.length(); i++) {
+    private static boolean isHexDigits(String s, int start) {
+        for (int i = start; i < start + 4 && i < s.length(); i++) {
             char h = s.charAt(i);
             boolean digit = (h >= '0' && h <= '9') || (h >= 'a' && h <= 'f') || (h >= 'A' && h <= 'F');
             if (!digit) return false;
@@ -1289,8 +1290,7 @@ public class MyExtension implements BurpExtension {
             JButton sendButton, JTextArea inputBox, boolean streaming) {
         String url = baseUrl + "/v1/chat/completions";
 
-        try {
-            HttpClient client = HttpClient.newHttpClient();
+        try (HttpClient client = HttpClient.newHttpClient()) {
             java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .header("Authorization", "Bearer " + apiKey)
@@ -1303,7 +1303,10 @@ public class MyExtension implements BurpExtension {
                     java.net.http.HttpResponse.BodyHandlers.ofInputStream());
 
             if (rawResponse.statusCode() != 200) {
-                String errorBody = new String(rawResponse.body().readAllBytes(), StandardCharsets.UTF_8);
+                String errorBody;
+                try (InputStream errBody = rawResponse.body()) {
+                    errorBody = new String(errBody.readAllBytes(), StandardCharsets.UTF_8);
+                }
                 LogManager.error("Stream HTTP " + rawResponse.statusCode() + ": " + errorBody);
                 SwingUtilities.invokeLater(() -> {
                     appendChatMessage(chatPane, "System", "HTTP " + rawResponse.statusCode() + "\n" + errorBody);
@@ -1414,7 +1417,7 @@ public class MyExtension implements BurpExtension {
      * "..." in between.
      *
      * @param key the API key
-     * @return the masked key, empty when blank, "****" when 8 characters or less
+     * @return the masked key, empty when blank, "****" when 8 characters or fewer
      */
     private String maskApiKey(String key) {
         if (key.isBlank()) return "";
@@ -1565,7 +1568,7 @@ public class MyExtension implements BurpExtension {
         }
 
         try {
-            HttpResponse response = sendApiRequest(api, endpoint, apiKey, "/v1/models");
+            HttpResponse response = sendApiRequest(api, endpoint, apiKey);
             if (response.statusCode() == 200) {
                 String body = response.bodyToString();
                 modelDropdown.removeAllItems();

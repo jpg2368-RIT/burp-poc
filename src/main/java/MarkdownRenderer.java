@@ -79,7 +79,7 @@ public class MarkdownRenderer extends AbstractVisitor {
     /** The document currently being rendered into. */
     private StyledDocument doc;
     /** Base font size in points; headers scale up from this. */
-    private int baseFontSize = 12;
+    private static final int BASE_FONT_SIZE = 12;
     /** The style applied to text appended during the current visit. */
     private SimpleAttributeSet currentStyle = new SimpleAttributeSet();
     /** Current nesting depth of lists (0 when not inside a list). */
@@ -627,37 +627,34 @@ public class MarkdownRenderer extends AbstractVisitor {
             }
         }
 
-        append(border('+', '+', '+', widths) + "\n");
+        append(border(widths) + "\n");
         boolean first = true;
         for (List<String> row : rows) {
             StyleConstants.setBold(currentStyle, first);
             append(rowLine(row, widths, cols) + "\n");
             StyleConstants.setBold(currentStyle, false);
             if (first) {
-                append(border('+', '+', '+', widths) + "\n");
+                append(border(widths) + "\n");
                 first = false;
             }
         }
-        append(border('+', '+', '+', widths) + "\n\n");
+        append(border(widths) + "\n\n");
         popStyle(saved);
     }
 
     /**
      * Builds one ASCII table border line.
      *
-     * @param left   the left border character
-     * @param mid    the column separator character
-     * @param right  the right border character
      * @param widths the column widths
      * @return the border line
      */
-    private String border(char left, char mid, char right, int[] widths) {
-        StringBuilder sb = new StringBuilder().append(left);
+    private String border(int[] widths) {
+        StringBuilder sb = new StringBuilder().append('+');
         for (int i = 0; i < widths.length; i++) {
-            if (i > 0) sb.append(mid);
+            if (i > 0) sb.append('+');
             sb.repeat("-", widths[i] + 2);
         }
-        return sb.append(right).toString();
+        return sb.append('+').toString();
     }
 
     /**
@@ -711,7 +708,7 @@ public class MarkdownRenderer extends AbstractVisitor {
      * @return the font size in points
      */
     private int headingSize(int level) {
-        return Math.max(baseFontSize, baseFontSize + (6 - level) * 2);
+        return Math.max(BASE_FONT_SIZE, BASE_FONT_SIZE + (6 - level) * 2);
     }
 
     /**

@@ -30,8 +30,6 @@ public final class LogManager {
     /** Level name for everything, including every SSE delta. */
     public static final String LEVEL_COMPLETE = "COMPLETE";
 
-    /** Numeric value for {@link #LEVEL_OFF}. */
-    private static final int OFF = 0;
     /** Numeric value for {@link #LEVEL_LOG}. */
     private static final int LOG = 1;
     /** Numeric value for {@link #LEVEL_DEBUG}. */
@@ -49,7 +47,7 @@ public final class LogManager {
 
     /** The Montoya API instance, used for Burp Output/Errors tab writes. */
     private static MontoyaApi api;
-    /** Current numeric log level (see the OFF/LOG/DEBUG/COMPLETE constants). */
+    /** Current numeric log level (see the LOG/DEBUG/COMPLETE constants). */
     private static int level = 0;
     /** Directory for log files; null means the system temp directory. */
     private static Path logDir;
@@ -94,33 +92,6 @@ public final class LogManager {
     }
 
     /**
-     * Checks whether LOG level output is enabled.
-     *
-     * @return true when the current level is at least LOG
-     */
-    public static boolean isLogEnabled() {
-        return level >= LOG;
-    }
-
-    /**
-     * Checks whether DEBUG level output is enabled.
-     *
-     * @return true when the current level is at least DEBUG
-     */
-    public static boolean isDebugEnabled() {
-        return level >= DEBUG;
-    }
-
-    /**
-     * Checks whether COMPLETE level output is enabled.
-     *
-     * @return true when the current level is at least COMPLETE
-     */
-    public static boolean isCompleteEnabled() {
-        return level >= COMPLETE;
-    }
-
-    /**
      * Returns the name of the current level.
      *
      * @return one of LEVEL_OFF, LEVEL_LOG, LEVEL_DEBUG, LEVEL_COMPLETE
@@ -132,15 +103,6 @@ public final class LogManager {
             case LOG -> LEVEL_LOG;
             default -> LEVEL_OFF;
         };
-    }
-
-    /**
-     * Returns the path of the open log file.
-     *
-     * @return the log file path, or an empty string when no file is open
-     */
-    public static String logFilePath() {
-        return logFile == null ? "" : logFile.toString();
     }
 
     /**
