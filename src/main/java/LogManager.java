@@ -11,8 +11,14 @@ import java.time.format.DateTimeFormatter;
 
 public final class LogManager {
     public static final String LEVEL_OFF = "OFF";
+    public static final String LEVEL_LOG = "LOG";
     public static final String LEVEL_DEBUG = "DEBUG";
-    public static final String LEVEL_TRACE = "TRACE";
+    public static final String LEVEL_COMPLETE = "COMPLETE";
+
+    private static final int OFF = 0;
+    private static final int LOG = 1;
+    private static final int DEBUG = 2;
+    private static final int COMPLETE = 3;
 
     private static final Object LOCK = new Object();
 
@@ -36,7 +42,7 @@ public final class LogManager {
             if (api.persistence().preferences().stringKeys().contains("logLevel")) {
                 level = parseLevel(api.persistence().preferences().getString("logLevel"));
             } else if (api.persistence().preferences().stringKeys().contains("debugEnabled")) {
-                level = api.persistence().preferences().getString("debugEnabled").equals("true") ? 1 : 0;
+                level = api.persistence().preferences().getString("debugEnabled").equals("true") ? DEBUG : 0;
             }
             if (api.persistence().preferences().stringKeys().contains("logDir")) {
                 String dir = api.persistence().preferences().getString("logDir");
@@ -50,20 +56,33 @@ public final class LogManager {
         }
     }
 
-    public static boolean isDebugEnabled() {
-        return level >= 1;
+    public static boolean isLogEnabled() {
+        return level >= LOG;
     }
 
-    public static boolean isTraceEnabled() {
-        return level >= 2;
+    public static boolean isDebugEnabled() {
+        return level >= DEBUG;
+    }
+
+    public static boolean isCompleteEnabled() {
+        return level >= COMPLETE;
     }
 
     public static String levelName() {
-        return level >= 2 ? LEVEL_TRACE : (level == 1 ? LEVEL_DEBUG : LEVEL_OFF);
+        return switch (level) {
+            case COMPLETE -> LEVEL_COMPLETE;
+            case DEBUG -> LEVEL_DEBUG;
+            case LOG -> LEVEL_LOG;
+            default -> LEVEL_OFF;
+        };
     }
 
     public static String logFilePath() {
         return logFile == null ? "" : logFile.toString();
+    }
+
+    public static String canonicalLevelName(String stored) {
+        return levelName(parseLevel(stored));
     }
 
     public static void setLogLevel(String name) {
@@ -80,14 +99,6 @@ public final class LogManager {
         }
     }
 
-    public static void setDebugEnabled(boolean enabled) {
-        setLogLevel(enabled ? LEVEL_DEBUG : LEVEL_OFF);
-    }
-
-    public static void setTraceEnabled(boolean enabled) {
-        setLogLevel(enabled ? LEVEL_TRACE : LEVEL_OFF);
-    }
-
     public static void setLogDirectory(String dir) {
         synchronized (LOCK) {
             logDir = (dir == null || dir.isBlank()) ? null : Path.of(dir);
@@ -98,37 +109,34 @@ public final class LogManager {
         }
     }
 
-    public static void debug(String message) {
-        if (level < 1) return;
-        writeLine("DEBUG", message);
-    }
-
-    public static void trace(String message) {
-        if (level < 2) return;
-        writeLine("TRACE", message);
-    }
-
-    private static int parseLevel(String name) {
-        if (name == null) return 0;
-        return switch (name.trim().toUpperCase()) {
-            case LEVEL_TRACE -> 2;
-            case LEVEL_DEBUG -> 1;
-            default -> 0;
-        };
-    }
-
-    public static void info(String message) {
-        if (api != null) {
-            api.logging().logToOutput(message);
+    public static void log(String message) {
+        if (level >= LOG) {
+            writeLine(LEVEL_LOG, message);
+            if (api != null) {
+                api.logging().logToOutput(message);
+            }
         }
-        writeLine("INFO", message);
+    }
+
+    public static void debug(String message) {
+        if (level >= DEBUG) {
+            writeLine(LEVEL_DEBUG, message);
+        }
+    }
+
+    public static void complete(String message) {
+        if (level >= COMPLETE) {
+            writeLine(LEVEL_COMPLETE, message);
+        }
     }
 
     public static void error(String message) {
         if (api != null) {
-            api.logging().logToOutput(message);
+            api.logging().logToError(message);
         }
-        writeLine("ERROR", message);
+        if (level >= LOG) {
+            writeLine("ERROR", message);
+        }
     }
 
     public static void close() {
@@ -159,12 +167,31 @@ public final class LogManager {
         }
     }
 
-    private static void writeLine(String level, String message) {
+    private static void writeLine(String levelTag, String message) {
         synchronized (LOCK) {
             if (writer == null) return;
-            writer.println(LocalDateTime.now().format(LINE_TS) + " [" + level + "] " + message);
+            writer.println(LocalDateTime.now().format(LINE_TS) + " [" + levelTag + "] " + message);
             writer.flush();
         }
+    }
+
+    private static int parseLevel(String name) {
+        if (name == null) return 0;
+        return switch (name.trim().toUpperCase()) {
+            case LEVEL_COMPLETE, "TRACE" -> COMPLETE;
+            case LEVEL_DEBUG -> DEBUG;
+            case LEVEL_LOG -> LOG;
+            default -> 0;
+        };
+    }
+
+    private static String levelName(int lvl) {
+        return switch (lvl) {
+            case COMPLETE -> LEVEL_COMPLETE;
+            case DEBUG -> LEVEL_DEBUG;
+            case LOG -> LEVEL_LOG;
+            default -> LEVEL_OFF;
+        };
     }
 
     private static void logToApiError(String message) {

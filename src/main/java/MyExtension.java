@@ -32,6 +32,7 @@ import java.util.Map;
 
 public class MyExtension implements BurpExtension {
     static JTextArea chatInputBox;
+    static burp.api.montoya.http.HttpService lastRepeaterService;
 
     private final StringBuilder streamingMarkdown = new StringBuilder();
     private int streamingStartOffset = 0;
@@ -46,7 +47,7 @@ public class MyExtension implements BurpExtension {
         LogManager.initialize(api);
 
         api.extension().setName("Burp Suite POC Extension");
-        LogManager.info("Extension successfully loaded. Log level: " + LogManager.levelName());
+        LogManager.log("Extension successfully loaded. Log level: " + LogManager.levelName());
 
         String hash = "";
         if (api.persistence().preferences().stringKeys().contains("hash")) {
@@ -224,7 +225,7 @@ public class MyExtension implements BurpExtension {
         extPanel.add(logLevelLabel, gbc);
 
         JComboBox<String> logLevelDropdown = new JComboBox<>(
-                new String[]{LogManager.LEVEL_OFF, LogManager.LEVEL_DEBUG, LogManager.LEVEL_TRACE});
+                new String[]{LogManager.LEVEL_OFF, LogManager.LEVEL_LOG, LogManager.LEVEL_DEBUG, LogManager.LEVEL_COMPLETE});
         logLevelDropdown.setSelectedItem(LogManager.levelName());
         gbc.gridx = 1;
         gbc.weightx = 1.0;
@@ -279,7 +280,8 @@ public class MyExtension implements BurpExtension {
             streamingCheckbox.setSelected(api.persistence().preferences().getString("streamEnabled").equals("true"));
         }
         if (api.persistence().preferences().stringKeys().contains("logLevel")) {
-            logLevelDropdown.setSelectedItem(api.persistence().preferences().getString("logLevel"));
+            logLevelDropdown.setSelectedItem(LogManager.canonicalLevelName(
+                    api.persistence().preferences().getString("logLevel")));
         } else if (api.persistence().preferences().stringKeys().contains("debugEnabled")
                 && api.persistence().preferences().getString("debugEnabled").equals("true")) {
             logLevelDropdown.setSelectedItem(LogManager.LEVEL_DEBUG);
@@ -360,7 +362,7 @@ public class MyExtension implements BurpExtension {
                 for (burp.api.montoya.http.message.HttpHeader header : response.headers()) {
                     allHeaders.append(header.name()).append(": ").append(header.value()).append("\n");
                 }
-                LogManager.info("Rate limit check - HTTP " + response.statusCode());
+                LogManager.log("Rate limit check - HTTP " + response.statusCode());
                 LogManager.debug("Rate limit headers:\n" + allHeaders);
 
                 String limit = null, remaining = null, reset = null;
@@ -396,7 +398,7 @@ public class MyExtension implements BurpExtension {
                 } else {
                     resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                 }
-                LogManager.debug("List models done - HTTP " + response.statusCode());
+                LogManager.log("List models done - HTTP " + response.statusCode());
             });
         });
 
@@ -422,7 +424,7 @@ public class MyExtension implements BurpExtension {
                 } else {
                     resultArea.setText("HTTP " + response.statusCode() + "\n\n" + response.bodyToString());
                 }
-                LogManager.debug("Test chat done - HTTP " + response.statusCode());
+                LogManager.log("Test chat done - HTTP " + response.statusCode());
             });
         });
 
@@ -574,10 +576,10 @@ public class MyExtension implements BurpExtension {
                         return;
                     }
 
-                    LogManager.debug("Chat request body:\n" + requestBody);
+                    LogManager.log("Chat request body:\n" + requestBody);
 
                     String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
-                    LogManager.info("Chat request to " + baseUrl + "/v1/chat/completions (streaming=" + streaming + ")");
+                    LogManager.log("Chat request to " + baseUrl + "/v1/chat/completions (streaming=" + streaming + ")");
 
                     if (streaming) {
                         sendChatStreaming(apiKey, baseUrl, requestBody, model, chatPane, chatHistory,
@@ -597,8 +599,7 @@ public class MyExtension implements BurpExtension {
                                 String body = readResponseBody(response);
                                 String content = extractContentFromResponse(body);
                                 if (content != null) {
-                                    LogManager.debug("Chat response (run #" + currentRunId + "): "
-                                            + content.length() + " chars");
+                                    LogManager.log("Chat response (run #" + currentRunId + "):\n" + content);
                                     appendChatMessage(chatPane, model, content);
                                     chatHistory.add(new String[]{"assistant", content});
                                 } else {
@@ -628,7 +629,7 @@ public class MyExtension implements BurpExtension {
         refreshModelsButton.addActionListener(e -> new Thread(() -> refreshModels(modelDropdown, api)).start());
 
         clearChatButton.addActionListener(e -> {
-            LogManager.debug("Chat cleared by user");
+            LogManager.log("Chat cleared by user");
             chatHistory.clear();
             chatPane.setText("");
             chatPane.getHighlighter().removeAllHighlights();
@@ -853,10 +854,78 @@ public class MyExtension implements BurpExtension {
         try {
             burp.api.montoya.http.message.requests.HttpRequest request =
                     burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
+
+            burp.api.montoya.http.HttpService service = resolveRepeaterService(request);
+            if (service != null) {
+                request = burp.api.montoya.http.message.requests.HttpRequest.httpRequest(service, cleaned);
+                LogManager.log("sendSelectionToRepeater: target set to " + service.host() + ":" + service.port()
+                        + (service.secure() ? " (https)" : " (http)"));
+            } else {
+                LogManager.debug("sendSelectionToRepeater: no usable Host header, letting Burp infer target");
+            }
+
             api.repeater().sendToRepeater(request, repeaterTabCaption());
         } catch (IllegalArgumentException ex) {
             LogManager.error("sendSelectionToRepeater: " + ex.getMessage());
             appendChatMessage(chatPane, "System", "Invalid HTTP request selected: " + ex.getMessage());
+        }
+    }
+
+    private burp.api.montoya.http.HttpService resolveRepeaterService(
+            burp.api.montoya.http.message.requests.HttpRequest request) {
+        String hostHeader = request.headerValue("Host");
+        if (hostHeader == null || hostHeader.isBlank()) {
+            return null;
+        }
+        hostHeader = hostHeader.trim();
+
+        String host;
+        Integer port = null;
+        if (hostHeader.startsWith("[")) {
+            int close = hostHeader.indexOf(']');
+            if (close < 0) return null;
+            host = hostHeader.substring(1, close);
+            String rest = hostHeader.substring(close + 1);
+            if (rest.startsWith(":")) {
+                port = parsePort(rest.substring(1));
+            } else if (!rest.isEmpty()) {
+                return null;
+            }
+        } else {
+            int firstColon = hostHeader.indexOf(':');
+            int lastColon = hostHeader.lastIndexOf(':');
+            if (firstColon >= 0 && firstColon == lastColon) {
+                host = hostHeader.substring(0, firstColon);
+                port = parsePort(hostHeader.substring(firstColon + 1));
+            } else if (firstColon >= 0) {
+                return null;
+            } else {
+                host = hostHeader;
+            }
+        }
+
+        if (host.isEmpty() || host.indexOf(' ') >= 0 || host.indexOf('\t') >= 0) {
+            return null;
+        }
+
+        if (port == null) {
+            if (MyExtension.lastRepeaterService != null) {
+                return burp.api.montoya.http.HttpService.httpService(host, lastRepeaterService.port(), lastRepeaterService.secure());
+            }
+            return burp.api.montoya.http.HttpService.httpService(host, 80, false);
+        }
+        return burp.api.montoya.http.HttpService.httpService(host, port, port == 443);
+    }
+
+    private Integer parsePort(String s) {
+        if (s == null || s.isEmpty()) return null;
+        try {
+            int p = Integer.parseInt(s);
+            if (p < 0 || p > 65535) return null;
+            return p;
+        } catch (NumberFormatException ex) {
+            LogManager.debug("sendSelectionToRepeater: non-numeric port in Host header: \"" + s + "\"");
+            return null;
         }
     }
 
@@ -1002,7 +1071,7 @@ public class MyExtension implements BurpExtension {
                             }
                             fullContent.append(delta);
                             chunkCount++;
-                            LogManager.debug("SSE delta +" + delta.length() + " chars (chunk " + chunkCount
+                            LogManager.complete("SSE delta +" + delta.length() + " chars (chunk " + chunkCount
                                     + ", total " + fullContent.length() + ")");
                             SwingUtilities.invokeLater(() -> appendStreamingContent(chatPane, delta));
                         }
@@ -1036,13 +1105,26 @@ public class MyExtension implements BurpExtension {
     private void saveSettings(MontoyaApi api, JComboBox<String> endpointDropdown,
             JTextField endpointField, JPasswordField apiKeyField, JCheckBox streamingCheckbox,
             JComboBox<String> logLevelDropdown, JTextField logDirField) {
+        String apiKey = new String(apiKeyField.getPassword());
         api.persistence().preferences().setString("apiEndpointType", (String) endpointDropdown.getSelectedItem());
         api.persistence().preferences().setString("apiEndpointUrl", endpointField.getText());
-        api.persistence().preferences().setString("apiKey", new String(apiKeyField.getPassword()));
+        api.persistence().preferences().setString("apiKey", apiKey);
         api.persistence().preferences().setString("streamEnabled", Boolean.toString(streamingCheckbox.isSelected()));
         api.persistence().preferences().setString("logLevel", (String) logLevelDropdown.getSelectedItem());
         api.persistence().preferences().setString("logDir", logDirField.getText());
-        LogManager.info("Settings auto-saved.");
+        LogManager.debug("Settings saved: endpointType=" + endpointDropdown.getSelectedItem()
+                + ", endpointUrl=" + endpointField.getText()
+                + ", apiKey=" + (apiKey.isEmpty() ? "(empty)" : maskApiKey(apiKey))
+                + ", streamEnabled=" + streamingCheckbox.isSelected()
+                + ", logLevel=" + logLevelDropdown.getSelectedItem()
+                + ", logDir=" + (logDirField.getText().isBlank() ? "(default)" : logDirField.getText()));
+        LogManager.log("Settings auto-saved.");
+    }
+
+    private String maskApiKey(String key) {
+        if (key.isBlank()) return "";
+        if (key.length() <= 8) return "****";
+        return key.substring(0, 4) + "..." + key.substring(key.length() - 4);
     }
 
     private void runSettingsTest(String endpoint, String apiKey, JTextArea resultArea,
@@ -1083,7 +1165,7 @@ public class MyExtension implements BurpExtension {
     }
 
     private void appendStreamingContent(JTextPane chatPane, String content) {
-        LogManager.debug("appendStreamingContent: +" + content.length() + " chars (total markdown "
+        LogManager.complete("appendStreamingContent: +" + content.length() + " chars (total markdown "
                 + (streamingMarkdown.length() + content.length()) + ")");
         StyledDocument doc = chatPane.getStyledDocument();
         streamingMarkdown.append(content);
@@ -1106,6 +1188,7 @@ public class MyExtension implements BurpExtension {
         } catch (BadLocationException e) {
             LogManager.error("finishStreamingMessage BadLocationException: " + e.getMessage());
         }
+        LogManager.log("Stream response (run #" + currentRunId + "):\n" + streamingMarkdown);
         streamingMarkdown.setLength(0);
         LogManager.debug("finishStreamingMessage: (run #" + currentRunId + ") doc length=" + doc.getLength());
         chatPane.setCaretPosition(doc.getLength());
@@ -1154,7 +1237,7 @@ public class MyExtension implements BurpExtension {
                     }
                 }
             }
-            LogManager.debug("refreshModels: loaded " + modelDropdown.getItemCount() + " models");
+            LogManager.log("refreshModels: loaded " + modelDropdown.getItemCount() + " models");
         } catch (Exception ex) {
             LogManager.error("Failed to refresh models: " + ex.getMessage());
         }

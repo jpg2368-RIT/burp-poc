@@ -78,16 +78,16 @@ public class MarkdownRenderer extends AbstractVisitor {
     }
 
     public void clearAnchors() {
-        LogManager.trace("clearAnchors()");
+        LogManager.complete("clearAnchors()");
         anchorOffsets.clear();
     }
 
     public void render(StyledDocument doc, String markdown) {
         if (markdown == null || markdown.isEmpty()) {
-            LogManager.debug("render(): empty input, skip");
+            LogManager.complete("render(): empty input, skip");
             return;
         }
-        LogManager.debug("render(): " + markdown.length() + " chars");
+        LogManager.complete("render(): " + markdown.length() + " chars");
         this.doc = doc;
         listDepth = 0;
         Arrays.fill(orderedCounters, 0);
@@ -97,7 +97,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         Node root = parser.parse(normalizeTables(markdown));
         root.accept(this);
         long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
-        LogManager.debug("render(): parsed+visited in " + elapsedMs + " ms, anchors=" + anchorOffsets.size()
+        LogManager.complete("render(): parsed+visited in " + elapsedMs + " ms, anchors=" + anchorOffsets.size()
                 + ", doc length=" + doc.getLength());
     }
 
@@ -144,7 +144,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         }
         String result = String.join("\n", out);
         if (tablesRepaired > 0) {
-            LogManager.debug("normalizeTables: repaired " + tablesRepaired + " pipe tables ("
+            LogManager.complete("normalizeTables: repaired " + tablesRepaired + " pipe tables ("
                     + lines.length + " lines -> " + out.size() + " lines)");
         }
         return result;
@@ -236,7 +236,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         StyleConstants.setForeground(currentStyle, linkColor);
         StyleConstants.setUnderline(currentStyle, true);
         currentStyle.addAttribute(LINK_ATTR, link.getDestination());
-        LogManager.trace("render link: " + link.getDestination());
+        LogManager.complete("render link: " + link.getDestination());
         visitChildren(link);
         popStyle(saved);
     }
@@ -274,7 +274,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         if (open.matches()) {
             anchorOffsets.put(open.group(2), doc.getLength());
             pendingAnchorClose = open.group(1).toLowerCase();
-            LogManager.trace("Anchor registered: id=\"" + open.group(2) + "\" at offset " + doc.getLength());
+            LogManager.complete("Anchor registered: id=\"" + open.group(2) + "\" at offset " + doc.getLength());
             return;
         }
         pendingAnchorClose = null;
@@ -305,7 +305,7 @@ public class MarkdownRenderer extends AbstractVisitor {
             id = idGen.generateId(text);
             anchorOffsets.put(id, start);
         }
-        LogManager.trace("Heading level " + heading.getLevel() + ": \"" + text + "\""
+        LogManager.complete("Heading level " + heading.getLevel() + ": \"" + text + "\""
                 + (id != null ? " (id=" + id + " at offset " + start + ")" : ""));
         append("\n\n");
     }
@@ -335,7 +335,7 @@ public class MarkdownRenderer extends AbstractVisitor {
             prefix.append(orderedCounters[listDepth]).append(". ");
             orderedCounters[listDepth]++;
         } else {
-            prefix.append("• ");
+            prefix.append("â€¢ ");
         }
         append(prefix.toString());
         visitChildren(listItem);
@@ -362,7 +362,7 @@ public class MarkdownRenderer extends AbstractVisitor {
 
     @Override
     public void visit(ThematicBreak thematicBreak) {
-        append("────────────────────────────────────────\n");
+        append("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€\n");
     }
 
     @Override
@@ -371,7 +371,7 @@ public class MarkdownRenderer extends AbstractVisitor {
         Matcher m = ANCHOR_PAIR.matcher(trimmed);
         if (m.matches()) {
             anchorOffsets.put(m.group(2), doc.getLength());
-            LogManager.trace("Anchor pair registered: id=\"" + m.group(2) + "\" at offset " + doc.getLength());
+            LogManager.complete("Anchor pair registered: id=\"" + m.group(2) + "\" at offset " + doc.getLength());
             return;
         }
         pendingAnchorClose = null;
@@ -462,7 +462,7 @@ private void codeBlock(String literal) {
         currentStyle.addAttribute(CODE_BLOCK_ATTR, Boolean.TRUE);
         String content = literal == null ? "" : literal;
         if (!content.isEmpty() && !content.endsWith("\n")) content += "\n";
-        LogManager.trace("Code block: " + content.length() + " chars");
+        LogManager.complete("Code block: " + content.length() + " chars");
         append(content);
         popStyle(saved);
         append("\n\n");

@@ -43,7 +43,7 @@ public class MyHttpHandler implements HttpHandler {
                 MessageDigest digest = MessageDigest.getInstance("SHA-256");
                 digest.update(input.getBytes(StandardCharsets.UTF_8));
                 this.hash = HexFormat.of().formatHex(digest.digest());
-                LogManager.info("Hash generated: " + this.hash);
+                LogManager.log("Hash generated: " + this.hash);
             } catch (NoSuchAlgorithmException e) {
                 LogManager.error("MyHttpHandler: SHA-256 unavailable: " + e.getMessage());
                 throw new RuntimeException(e);
