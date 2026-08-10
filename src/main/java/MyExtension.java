@@ -28,6 +28,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 public class MyExtension implements BurpExtension {
@@ -855,13 +857,29 @@ public class MyExtension implements BurpExtension {
             burp.api.montoya.http.message.requests.HttpRequest request =
                     burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
 
-            burp.api.montoya.http.HttpService service = resolveRepeaterService(request);
-            if (service != null) {
-                request = burp.api.montoya.http.message.requests.HttpRequest.httpRequest(service, cleaned);
-                LogManager.log("sendSelectionToRepeater: target set to " + service.host() + ":" + service.port()
-                        + (service.secure() ? " (https)" : " (http)"));
+            burp.api.montoya.http.HttpService service = null;
+            String targetSource = null;
+            if (MyExtension.lastRepeaterService != null) {
+                service = MyExtension.lastRepeaterService;
+                targetSource = "captured from Repeater";
             } else {
-                LogManager.debug("sendSelectionToRepeater: no usable Host header, letting Burp infer target");
+                service = parseHostFromText(cleaned);
+                if (service != null) {
+                    targetSource = "parsed from Host header";
+                }
+            }
+
+            LogManager.debug("sendSelectionToRepeater: parsed request service=" + (request.httpService() != null
+                    ? request.httpService().host() + ":" + request.httpService().port()
+                    + (request.httpService().secure() ? " (https)" : " (http)")
+                    : "null") + ", headerValue(Host)=" + request.headerValue("Host"));
+
+            if (service != null) {
+                request = request.withService(service);
+                LogManager.log("sendSelectionToRepeater: target set to " + service.host() + ":" + service.port()
+                        + (service.secure() ? " (https)" : " (http)") + " [" + targetSource + "]");
+            } else {
+                LogManager.log("sendSelectionToRepeater: no target available (no captured service and no Host header in selection); sending without explicit target");
             }
 
             api.repeater().sendToRepeater(request, repeaterTabCaption());
@@ -871,13 +889,19 @@ public class MyExtension implements BurpExtension {
         }
     }
 
-    private burp.api.montoya.http.HttpService resolveRepeaterService(
-            burp.api.montoya.http.message.requests.HttpRequest request) {
-        String hostHeader = request.headerValue("Host");
-        if (hostHeader == null || hostHeader.isBlank()) {
+    private static final Pattern HOST_HEADER_PATTERN =
+            Pattern.compile("(?im)^[ \\t]*Host:[ \\t]*([^\\r\\n]+)");
+
+    private burp.api.montoya.http.HttpService parseHostFromText(String text) {
+        Matcher matcher = HOST_HEADER_PATTERN.matcher(text);
+        if (!matcher.find()) {
             return null;
         }
-        hostHeader = hostHeader.trim();
+        String hostHeader = matcher.group(1).trim();
+        hostHeader = hostHeader.replaceAll("`+\\s*$", "").trim();
+        if (hostHeader.isEmpty()) {
+            return null;
+        }
 
         String host;
         Integer port = null;
@@ -909,9 +933,6 @@ public class MyExtension implements BurpExtension {
         }
 
         if (port == null) {
-            if (MyExtension.lastRepeaterService != null) {
-                return burp.api.montoya.http.HttpService.httpService(host, lastRepeaterService.port(), lastRepeaterService.secure());
-            }
             return burp.api.montoya.http.HttpService.httpService(host, 80, false);
         }
         return burp.api.montoya.http.HttpService.httpService(host, port, port == 443);
