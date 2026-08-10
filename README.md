@@ -29,7 +29,7 @@ When a request is sent from the chat panel to a new Repeater tab, the target is 
 
 The resolved target is logged at `LOG` level. Example: `target set to example.com:443 (https) [captured from Repeater]`.
 
-Before parsing, the selected text is normalized: trailing whitespace is removed from each line. The method, path, and header values are then stripped of any stray CR/LF characters. This keeps model-generated requests displayable in Repeater and avoids the HTTP/2 "kettled" warning.
+Before parsing, the selected text is normalized: trailing whitespace is removed from each line, and line endings are converted to CRLF (Burp's raw request parser needs CRLF delimiters; bare LF text is read as a single request line, so headers are never parsed). The method, path, and header values are then stripped of any stray CR/LF characters. This keeps model-generated requests displayable in Repeater and avoids the HTTP/2 "kettled" warning.
 
 ## Requirements
 

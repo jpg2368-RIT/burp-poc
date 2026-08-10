@@ -997,11 +997,14 @@ public class MyExtension implements BurpExtension {
      *   <li>Otherwise send the request without an explicit target.</li>
      * </ol>
      *
-     * <p>Before parsing, the selection is normalized (trailing spaces per line
-     * removed) because chat text often comes from model output. After parsing,
-     * stray CR/LF characters are stripped from the method, path, and header
-     * values, so Burp does not flag the request as an HTTP/2 "kettled" request
-     * in the new Repeater tab.</p>
+     * <p>Before parsing, the selection is normalized because chat text often
+     * comes from model output: trailing whitespace is removed from each line,
+     * then all line endings are converted to CRLF. Burp's raw request parser
+     * needs CRLF delimiters; bare LF text is read as a single request line, so
+     * headers are never parsed and the request is flagged as an HTTP/2
+     * "kettled" request in Repeater. After parsing, stray CR/LF characters are
+     * stripped from the method, path, and header values as a second line of
+     * defense.</p>
      *
      * @param chatPane the chat text pane, used for error messages
      * @param api      the Montoya API instance
@@ -1010,8 +1013,10 @@ public class MyExtension implements BurpExtension {
     private void sendSelectionToRepeater(JTextPane chatPane, MontoyaApi api, String selected) {
         if (selected == null) return;
 
-        String cleaned = normalizeRequestText(stripCodeFences(selected));
-        LogManager.debug("sendSelectionToRepeater: " + cleaned.length() + " chars, tab=\"" + repeaterTabCaption() + "\"");
+        String cleaned = normalizeLineEndings(normalizeRequestText(stripCodeFences(selected)));
+        String textPreview = cleaned.length() > 120 ? cleaned.substring(0, 120) + "[...]" : cleaned;
+        LogManager.debug("sendSelectionToRepeater: " + cleaned.length() + " chars, tab=\"" + repeaterTabCaption()
+                + "\", text=\"" + textPreview.replace("\r", "\\r").replace("\n", "\\n") + "\"");
         try {
             burp.api.montoya.http.message.requests.HttpRequest request =
                     burp.api.montoya.http.message.requests.HttpRequest.httpRequest(cleaned);
@@ -1028,10 +1033,15 @@ public class MyExtension implements BurpExtension {
                 }
             }
 
-            LogManager.debug("sendSelectionToRepeater: parsed request service=" + (request.httpService() != null
+            LogManager.debug("sendSelectionToRepeater: parsed request method=\""
+                    + request.method().replace("\r", "\\r").replace("\n", "\\n")
+                    + "\", path=\"" + request.path().replace("\r", "\\r").replace("\n", "\\n")
+                    + "\", headers=" + request.headers().size()
+                    + ", headerValue(Host)=" + request.headerValue("Host")
+                    + ", httpService=" + (request.httpService() != null
                     ? request.httpService().host() + ":" + request.httpService().port()
                     + (request.httpService().secure() ? " (https)" : " (http)")
-                    : "null") + ", headerValue(Host)=" + request.headerValue("Host"));
+                    : "null"));
 
             if (service != null) {
                 request = request.withService(service);
@@ -1238,6 +1248,24 @@ public class MyExtension implements BurpExtension {
      */
     private String normalizeRequestText(String text) {
         return text.replaceAll("(?m)[ \\t]+$", "");
+    }
+
+    /**
+     * Converts all line endings in a request text to the CRLF sequence.
+     *
+     * <p>Burp's raw request parser expects CRLF-delimited HTTP text. Chat text
+     * often uses bare {@code \n} (model output, Swing documents); given bare
+     * {@code \n}, the whole selection is read as a single request line and
+     * headers are never parsed, which later shows up as a kettled HTTP/2
+     * request in Repeater. This method collapses existing {@code \r\n} pairs
+     * and lone {@code \r} to {@code \n} first, then expands every {@code \n}
+     * to {@code \r\n}.</p>
+     *
+     * @param text the request text to normalize
+     * @return the text with CRLF line endings
+     */
+    private String normalizeLineEndings(String text) {
+        return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n");
     }
 
     /**
