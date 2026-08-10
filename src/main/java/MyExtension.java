@@ -32,17 +32,51 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 
+/**
+ * Main entry point of the extension. Implements {@link BurpExtension}.
+ *
+ * <p>Registers two suite tabs: "Settings POC" (LLM endpoint and logging
+ * configuration) and "Chat POC" (the LLM chat panel). Also registers the
+ * Repeater context-menu provider and the unload handler that closes the log
+ * file.</p>
+ *
+ * <p>Chat requests are sent either through the Montoya HTTP client (non-streaming)
+ * or over SSE with java.net.http.HttpClient (streaming). Streaming output is
+ * re-rendered as Markdown on every delta.</p>
+ *
+ * <p>Request routing between Repeater and the chat panel works through two
+ * static fields: {@link #chatInputBox} receives requests copied by the
+ * context menu, and {@link #lastRepeaterService} remembers the target for
+ * requests sent back to Repeater.</p>
+ */
 public class MyExtension implements BurpExtension {
+    /** The chat input text area; filled by the Repeater context-menu provider. */
     static JTextArea chatInputBox;
+    /** The last request service captured from Repeater via "Send to POC Chat". */
     static burp.api.montoya.http.HttpService lastRepeaterService;
 
+    /** Accumulated Markdown of the message currently streaming in. */
     private final StringBuilder streamingMarkdown = new StringBuilder();
+    /** Document offset where the streaming message starts. */
     private int streamingStartOffset = 0;
+    /** Renders Markdown text into the chat pane's styled document. */
     private final MarkdownRenderer markdownRenderer = new MarkdownRenderer();
+    /** Counter for chat runs; every send increments it. */
     private int chatRunCounter = 0;
+    /** The run id of the currently active chat request. */
     private int currentRunId = 0;
+    /** True while saved settings are being loaded into the settings UI. */
     private boolean restoringSettings = false;
 
+    /**
+     * Called once by Burp when the extension loads.
+     *
+     * <p>Initializes logging, builds the settings and chat tabs, loads saved
+     * preferences, wires up all controls, refreshes the model list, and
+     * registers the Repeater context-menu provider.</p>
+     *
+     * @param api the Montoya API instance
+     */
     @Override
     public void initialize(MontoyaApi api) {
         LogManager.initialize(api);
@@ -639,6 +673,20 @@ public class MyExtension implements BurpExtension {
         api.userInterface().registerContextMenuItemsProvider(new RepeaterContextMenuProvider());
     }
 
+    /**
+     * Sends a GET request to the configured LLM endpoint and returns the
+     * response.
+     *
+     * <p>Used by the settings-testing tools and the model list refresh. The
+     * request is built from the endpoint base URL with the trailing version
+     * segment and slashes removed.</p>
+     *
+     * @param api      the Montoya API instance
+     * @param endpoint the endpoint base URL, e.g. {@code https://api.example.com/v1}
+     * @param apiKey   the API key for the Authorization header
+     * @param path     the API path to request, e.g. {@code /v1/models}
+     * @return the HTTP response
+     */
     private HttpResponse sendApiRequest(MontoyaApi api, String endpoint, String apiKey, String path) {
         String baseUrl = endpoint.replaceAll("/+$", "").replaceAll("/v1$", "");
         burp.api.montoya.http.message.requests.HttpRequest request =
@@ -649,6 +697,17 @@ public class MyExtension implements BurpExtension {
         return api.http().sendRequest(request).response();
     }
 
+    /**
+     * Appends a chat message to the chat pane.
+     *
+     * <p>Writes a bold {@code [speaker]:} header. Model messages are rendered
+     * as Markdown and get code-box highlights; user and system messages are
+     * written as plain text.</p>
+     *
+     * @param chatPane the chat text pane
+     * @param speaker  the speaker name ("You", "System", or a model name)
+     * @param message  the message text
+     */
     private void appendChatMessage(JTextPane chatPane, String speaker, String message) {
         LogManager.debug("appendChatMessage: (run #" + currentRunId + ") speaker=" + speaker + ", "
                 + message.length() + " chars");
@@ -675,11 +734,26 @@ public class MyExtension implements BurpExtension {
         chatPane.setCaretPosition(doc.getLength());
     }
 
+    /**
+     * Inserts one blank line between messages when the document is not empty.
+     *
+     * @param doc the chat document
+     * @throws BadLocationException when the insert position is invalid
+     */
     private void insertMessageSpacing(StyledDocument doc) throws BadLocationException {
         if (doc.getLength() == 0) return;
         doc.insertString(doc.getLength(), "\n", null);
     }
 
+    /**
+     * Repaints the highlight boxes around code blocks.
+     *
+     * <p>Scans the document for runs of text carrying the
+     * {@link MarkdownRenderer#CODE_BLOCK_ATTR} attribute and adds a
+     * {@link #codeBoxPainter} highlight over each run.</p>
+     *
+     * @param chatPane the chat text pane
+     */
     private void refreshCodeBoxes(JTextPane chatPane) {
         StyledDocument doc = chatPane.getStyledDocument();
         chatPane.getHighlighter().removeAllHighlights();
@@ -707,11 +781,25 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /** Shared painter used to draw the code-box backgrounds. */
     private static final CodeBoxPainter codeBoxPainter = new CodeBoxPainter();
 
+    /**
+     * Paints a shaded rectangle with a border behind code-block text.
+     */
     private static class CodeBoxPainter implements Highlighter.HighlightPainter {
+        /** Color of the code-box border. */
         private static final Color BOX_BORDER = new Color(140, 140, 140);
 
+        /**
+         * Paints the highlight rectangle over the given text range.
+         *
+         * @param g      the graphics context
+         * @param p0     the start offset of the highlighted range
+         * @param p1     the end offset of the highlighted range
+         * @param bounds the component bounds
+         * @param c      the text component
+         */
         @Override
         public void paint(Graphics g, int p0, int p1, Shape bounds, JTextComponent c) {
             if (p1 <= p0) return;
@@ -734,10 +822,25 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /**
+     * Checks whether a speaker is a model (anything other than "You" or
+     * "System").
+     *
+     * @param speaker the speaker name
+     * @return true when the message should be rendered as Markdown
+     */
     private boolean isModelSpeaker(String speaker) {
         return !"You".equals(speaker) && !"System".equals(speaker);
     }
 
+    /**
+     * Installs the mouse listeners on the chat pane: a popup menu for sending
+     * selected text to Repeater, click handling for links, and a hover cursor
+     * for links.
+     *
+     * @param chatPane the chat text pane
+     * @param api      the Montoya API instance
+     */
     private void installChatPopup(JTextPane chatPane, MontoyaApi api) {
         chatPane.addMouseListener(new MouseAdapter() {
             @Override
@@ -776,6 +879,13 @@ public class MyExtension implements BurpExtension {
         });
     }
 
+    /**
+     * Returns the link URL at a given point in the chat pane, if any.
+     *
+     * @param chatPane the chat text pane
+     * @param point    the mouse position in component coordinates
+     * @return the destination URL, or null when the position is not on a link
+     */
     private String linkUrlAt(JTextPane chatPane, Point point) {
         StyledDocument doc = chatPane.getStyledDocument();
         int offset = chatPane.viewToModel2D(point);
@@ -784,8 +894,18 @@ public class MyExtension implements BurpExtension {
         return url instanceof String s ? s : null;
     }
 
+    /** Extra margin above a heading when scrolling to an anchor link. */
     private static final int ANCHOR_SCROLL_MARGIN = 30;
 
+    /**
+     * Scrolls the chat pane to a registered heading anchor.
+     *
+     * <p>No-op when the anchor slug is unknown or its offset is outside the
+     * document.</p>
+     *
+     * @param chatPane the chat text pane
+     * @param slug     the anchor slug, e.g. {@code section-1}
+     */
     private void scrollToAnchor(JTextPane chatPane, String slug) {
         Map<String, Integer> anchors = markdownRenderer.anchorOffsets();
         Integer offset = anchors.get(slug);
@@ -813,12 +933,26 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /**
+     * Checks whether a URL may be opened in the system browser.
+     *
+     * <p>Only http:// and https:// URLs are allowed. This blocks schemes such
+     * as file:, javascript:, and custom handlers that could be abused.</p>
+     *
+     * @param url the URL to check
+     * @return true when the URL is safe to open
+     */
     static boolean isSafeLinkUrl(String url) {
         if (url == null) return false;
         String lower = url.toLowerCase();
         return lower.startsWith("http://") || lower.startsWith("https://");
     }
 
+    /**
+     * Opens a URL in the system browser when it passes the safe-link check.
+     *
+     * @param url the URL to open
+     */
     private void openUrl(String url) {
         if (!isSafeLinkUrl(url)) return;
         try {
@@ -828,6 +962,15 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /**
+     * Shows the chat-panel popup menu with the "Send to Repeater" item.
+     *
+     * <p>No-op when nothing is selected in the chat pane.</p>
+     *
+     * @param e        the mouse event that triggered the popup
+     * @param chatPane the chat text pane
+     * @param api      the Montoya API instance
+     */
     private void showPopup(MouseEvent e, JTextPane chatPane, MontoyaApi api) {
         String selected = chatPane.getSelectedText();
         if (selected == null || selected.isBlank()) return;
@@ -839,6 +982,23 @@ public class MyExtension implements BurpExtension {
         menu.show(e.getComponent(), e.getX(), e.getY());
     }
 
+    /**
+     * Parses the selected text as an HTTP request and opens it in a new
+     * Repeater tab.
+     *
+     * <p>Target resolution order:</p>
+     * <ol>
+     *   <li>Use the service captured from Repeater by "Send to POC Chat"
+     *       ({@link #lastRepeaterService}), if any.</li>
+     *   <li>Otherwise parse the {@code Host:} header from the selection via
+     *       {@link #parseHostFromText}.</li>
+     *   <li>Otherwise send the request without an explicit target.</li>
+     * </ol>
+     *
+     * @param chatPane the chat text pane, used for error messages
+     * @param api      the Montoya API instance
+     * @param selected the selected text to parse
+     */
     private void sendSelectionToRepeater(JTextPane chatPane, MontoyaApi api, String selected) {
         if (selected == null) return;
 
@@ -880,9 +1040,20 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /** Matches a {@code Host:} header line and captures its value. */
     private static final Pattern HOST_HEADER_PATTERN =
             Pattern.compile("(?im)^[ \\t]*Host:[ \\t]*([^\\r\\n]+)");
 
+    /**
+     * Parses an {@link HttpService} from the {@code Host:} header of a text.
+     *
+     * <p>Supports IPv4, hostnames, and bracketed IPv6, each with an optional
+     * port. A missing port defaults to 80; port 443 implies https. The value
+     * may be wrapped in trailing backticks, which are stripped.</p>
+     *
+     * @param text the text to search for a Host header
+     * @return the parsed service, or null when no valid Host header exists
+     */
     private burp.api.montoya.http.HttpService parseHostFromText(String text) {
         Matcher matcher = HOST_HEADER_PATTERN.matcher(text);
         if (!matcher.find()) {
@@ -929,6 +1100,12 @@ public class MyExtension implements BurpExtension {
         return burp.api.montoya.http.HttpService.httpService(host, port, port == 443);
     }
 
+    /**
+     * Parses and validates a port number.
+     *
+     * @param s the port text; null or empty returns null
+     * @return the port number, or null when invalid or out of range
+     */
     private Integer parsePort(String s) {
         if (s == null || s.isEmpty()) return null;
         try {
@@ -941,10 +1118,25 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /**
+     * Builds the tab caption for requests sent out of the chat panel.
+     *
+     * @return a caption with the current local time, e.g. "From Chat [2026-08-09 20:35:04]"
+     */
     private String repeaterTabCaption() {
         return "From Chat [" + DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").format(LocalDateTime.now()) + "]";
     }
 
+    /**
+     * Removes an enclosing fenced-code-block marker from text.
+     *
+     * <p>Strips a leading ``` line and a trailing ``` line, then trims. Used
+     * because the Repeater context menu wraps requests in a Markdown fence when
+     * copying them into the chat input box.</p>
+     *
+     * @param text the text to clean
+     * @return the cleaned text
+     */
     private String stripCodeFences(String text) {
         String s = text.trim();
         if (s.startsWith("```")) {
@@ -958,10 +1150,25 @@ public class MyExtension implements BurpExtension {
         return s.trim();
     }
 
+    /**
+     * Reads the body of a Montoya response as a UTF-8 string.
+     *
+     * @param response the HTTP response
+     * @return the response body text
+     */
     private String readResponseBody(HttpResponse response) {
         return new String(response.body().getBytes(), StandardCharsets.UTF_8);
     }
 
+    /**
+     * Escapes a string for embedding inside a JSON string literal.
+     *
+     * <p>Escapes quotes, backslashes, and control characters that would break
+     * the JSON structure.</p>
+     *
+     * @param s the string to escape
+     * @return the escaped string
+     */
     private String escapeJson(String s) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < s.length(); i++) {
@@ -978,6 +1185,17 @@ public class MyExtension implements BurpExtension {
         return sb.toString();
     }
 
+    /**
+     * Unescapes the JSON string that starts at the given index.
+     *
+     * <p>Reads until the closing quote, decoding escaped quotes, backslashes,
+     * newlines, tabs, carriage returns, and \\uXXXX sequences. Unknown escapes
+     * are kept as-is.</p>
+     *
+     * @param s        the JSON text
+     * @param startIdx the index of the first character after the opening quote
+     * @return the unescaped string content
+     */
     private static String unescapeJsonString(String s, int startIdx) {
         StringBuilder content = new StringBuilder();
         while (startIdx < s.length()) {
@@ -1008,6 +1226,14 @@ public class MyExtension implements BurpExtension {
         return content.toString();
     }
 
+    /**
+     * Checks whether a range of characters are all hexadecimal digits.
+     *
+     * @param s     the text to check
+     * @param start the start index
+     * @param count the number of characters to check
+     * @return true when all characters in the range are hex digits
+     */
     private static boolean isHexDigits(String s, int start, int count) {
         for (int i = start; i < start + count && i < s.length(); i++) {
             char h = s.charAt(i);
@@ -1017,6 +1243,15 @@ public class MyExtension implements BurpExtension {
         return true;
     }
 
+    /**
+     * Extracts the assistant message content from a chat-completion response.
+     *
+     * <p>Locates the first {@code choices[].message.content} string in the
+     * response body and unescapes it.</p>
+     *
+     * @param body the raw response body
+     * @return the extracted content, or null when not found
+     */
     private String extractContentFromResponse(String body) {
         String choicesKey = "\"choices\":";
         int choicesIdx = body.indexOf(choicesKey);
@@ -1029,6 +1264,26 @@ public class MyExtension implements BurpExtension {
         return unescapeJsonString(body, idx + searchKey.length());
     }
 
+    /**
+     * Sends a chat request with SSE streaming enabled and renders the response
+     * live into the chat pane.
+     *
+     * <p>Runs on a background thread. Reads {@code data:} lines from the
+     * stream, appends each content delta to the streaming buffer, and
+     * re-renders the whole accumulated Markdown on the EDT. On success the
+     * full response is added to the chat history.</p>
+     *
+     * @param apiKey       the API key for the Authorization header
+     * @param baseUrl      the endpoint base URL without the version segment
+     * @param requestBody  the JSON chat request body
+     * @param model        the model name, used as the speaker label
+     * @param chatPane     the chat text pane
+     * @param chatHistory  the conversation history; receives the final response
+     * @param chatProgress the progress bar to hide once the first chunk arrives
+     * @param sendButton   the send button to re-enable
+     * @param inputBox     the input box to re-enable
+     * @param streaming    whether streaming is on (controls the request timeout)
+     */
     private void sendChatStreaming(String apiKey, String baseUrl, String requestBody, String model,
             JTextPane chatPane, List<String[]> chatHistory, JProgressBar chatProgress,
             JButton sendButton, JTextArea inputBox, boolean streaming) {
@@ -1108,12 +1363,33 @@ public class MyExtension implements BurpExtension {
         }
     }
 
+    /**
+     * Restores the chat controls after a chat request finishes or fails.
+     *
+     * @param chatProgress the progress bar to hide
+     * @param sendButton   the send button to enable
+     * @param inputBox     the input box to enable
+     */
     private void cleanupChatControls(JProgressBar chatProgress, JButton sendButton, JTextArea inputBox) {
         chatProgress.setVisible(false);
         sendButton.setEnabled(true);
         inputBox.setEnabled(true);
     }
 
+    /**
+     * Saves the current settings values to Burp preferences.
+     *
+     * <p>Writes all settings, then logs a masked summary at DEBUG level and a
+     * confirmation at LOG level.</p>
+     *
+     * @param api              the Montoya API instance
+     * @param endpointDropdown the endpoint-type dropdown
+     * @param endpointField    the endpoint URL field
+     * @param apiKeyField      the API key field
+     * @param streamingCheckbox the streaming checkbox
+     * @param logLevelDropdown the log-level dropdown
+     * @param logDirField      the log-directory field
+     */
     private void saveSettings(MontoyaApi api, JComboBox<String> endpointDropdown,
             JTextField endpointField, JPasswordField apiKeyField, JCheckBox streamingCheckbox,
             JComboBox<String> logLevelDropdown, JTextField logDirField) {
@@ -1133,12 +1409,32 @@ public class MyExtension implements BurpExtension {
         LogManager.log("Settings auto-saved.");
     }
 
+    /**
+     * Masks an API key for logging: first four and last four characters with
+     * "..." in between.
+     *
+     * @param key the API key
+     * @return the masked key, empty when blank, "****" when 8 characters or less
+     */
     private String maskApiKey(String key) {
         if (key.isBlank()) return "";
         if (key.length() <= 8) return "****";
         return key.substring(0, 4) + "..." + key.substring(key.length() - 4);
     }
 
+    /**
+     * Runs one of the settings-testing tools on a background thread.
+     *
+     * <p>Shows a loading message first and requires both the endpoint and the
+     * API key to be filled in. Exceptions from the task are shown in the result
+     * area.</p>
+     *
+     * @param endpoint    the endpoint URL
+     * @param apiKey      the API key
+     * @param resultArea  the result text area
+     * @param loadingText the text shown while the task runs
+     * @param task        the task to run; must update resultArea itself
+     */
     private void runSettingsTest(String endpoint, String apiKey, JTextArea resultArea,
             String loadingText, Runnable task) {
         if (endpoint.isEmpty() || apiKey.isEmpty()) {
@@ -1159,6 +1455,13 @@ public class MyExtension implements BurpExtension {
         }).start();
     }
 
+    /**
+     * Starts a streaming message: writes the bold speaker header, resets the
+     * streaming buffer, and records the start offset.
+     *
+     * @param chatPane the chat text pane
+     * @param speaker  the speaker name (the model name)
+     */
     private void startStreamingMessage(JTextPane chatPane, String speaker) {
         StyledDocument doc = chatPane.getStyledDocument();
         Style bold = chatPane.addStyle("streamBold", null);
@@ -1176,6 +1479,13 @@ public class MyExtension implements BurpExtension {
         chatPane.setCaretPosition(doc.getLength());
     }
 
+    /**
+     * Appends a streaming delta: rebuilds the streaming message by removing the
+     * previous content and re-rendering the full accumulated Markdown.
+     *
+     * @param chatPane the chat text pane
+     * @param content  the new delta to append
+     */
     private void appendStreamingContent(JTextPane chatPane, String content) {
         LogManager.complete("appendStreamingContent: +" + content.length() + " chars (total markdown "
                 + (streamingMarkdown.length() + content.length()) + ")");
@@ -1192,6 +1502,12 @@ public class MyExtension implements BurpExtension {
         chatPane.setCaretPosition(doc.getLength());
     }
 
+    /**
+     * Finishes a streaming message: appends trailing blank lines, logs the full
+     * response at LOG level, and clears the streaming buffer.
+     *
+     * @param chatPane the chat text pane
+     */
     private void finishStreamingMessage(JTextPane chatPane) {
         StyledDocument doc = chatPane.getStyledDocument();
         Style normal = chatPane.addStyle("streamNormal", null);
@@ -1206,6 +1522,12 @@ public class MyExtension implements BurpExtension {
         chatPane.setCaretPosition(doc.getLength());
     }
 
+    /**
+     * Extracts the content delta from one SSE data payload.
+     *
+     * @param data the payload text after the {@code data: } prefix
+     * @return the unescaped delta content, or an empty string when absent
+     */
     private String extractDeltaContent(String data) {
         String searchKey = "\"delta\":";
         int deltaIdx = data.indexOf(searchKey);
@@ -1218,6 +1540,16 @@ public class MyExtension implements BurpExtension {
         return unescapeJsonString(data, contentIdx + contentKey.length());
     }
 
+    /**
+     * Populates the model dropdown from the endpoint's model list.
+     *
+     * <p>Reads the saved endpoint and API key from preferences and stops early
+     * when either is missing. Model ids are extracted from the JSON response;
+     * failures only log an error.</p>
+     *
+     * @param modelDropdown the model dropdown to fill
+     * @param api           the Montoya API instance
+     */
     private void refreshModels(JComboBox<String> modelDropdown, MontoyaApi api) {
         String endpoint = "";
         String apiKey = "";

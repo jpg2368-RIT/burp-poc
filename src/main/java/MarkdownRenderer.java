@@ -44,44 +44,98 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Renders Markdown text into a Swing {@link StyledDocument} for the chat panel.
+ *
+ * <p>Visits the commonmark parse tree with custom formatting for headings, code
+ * blocks, tables, lists, links, and block quotes. GFM tables and autolinks are
+ * enabled. Output is styled with simple {@link SimpleAttributeSet} attributes;
+ * code blocks and links also carry custom attributes (see {@link #CODE_BLOCK_ATTR}
+ * and {@link #LINK_ATTR}) that the chat panel uses for highlighting and click
+ * handling.</p>
+ *
+ * <p>The renderer is a singleton per chat tab. State is reset at the start of
+ * every {@link #render} call.</p>
+ */
 public class MarkdownRenderer extends AbstractVisitor {
+    /** Custom attribute marking text inside a code block. */
     public static final String CODE_BLOCK_ATTR = "codeBlock";
+    /** Custom attribute holding the destination URL of a rendered link. */
     public static final String LINK_ATTR = "linkUrl";
+    /** Text color used for rendered links. */
     private Color linkColor = new Color(0, 90, 200);
 
+    /** Matches a standalone anchor open tag, e.g. {@code <a id="section-1">}. */
     private static final Pattern ANCHOR_OPEN = Pattern.compile("(?i)^<(a|span)\\b[^>]*\\b(?:id|name)\\s*=\\s*\"([^\"]+)\"[^>]*>$");
+    /** Matches a standalone anchor close tag, e.g. {@code </a>}. */
     private static final Pattern ANCHOR_CLOSE = Pattern.compile("(?i)^</(a|span)>$");
+    /** Matches an empty anchor pair, e.g. {@code <a id="section-1"></a>}. */
     private static final Pattern ANCHOR_PAIR = Pattern.compile("(?i)<(a|span)\\b[^>]*\\b(?:id|name)\\s*=\\s*\"([^\"]+)\"[^>]*></(?:a|span)>");
 
+    /** Heading anchors mapped from slug to document offset. */
     private final Map<String, Integer> anchorOffsets = new HashMap<>();
+    /** The commonmark parser with GFM tables and autolinks enabled. */
     private final Parser parser;
+    /** The document currently being rendered into. */
     private StyledDocument doc;
+    /** Base font size in points; headers scale up from this. */
     private int baseFontSize = 12;
+    /** The style applied to text appended during the current visit. */
     private SimpleAttributeSet currentStyle = new SimpleAttributeSet();
+    /** Current nesting depth of lists (0 when not inside a list). */
     private int listDepth = 0;
+    /** Per-depth counters for ordered lists. */
     private final int[] orderedCounters = new int[8];
+    /** Generates heading ids for anchor links. */
     private IdGenerator idGen;
+    /** Tag of the anchor whose close tag is pending. */
     private String pendingAnchorClose;
 
+    /**
+     * Builds the renderer with a commonmark parser that supports GFM tables and
+     * autolinks.
+     */
     public MarkdownRenderer() {
         parser = Parser.builder()
                 .extensions(List.of(TablesExtension.create(), AutolinkExtension.create()))
                 .build();
     }
 
+    /**
+     * Sets the color used for rendered links.
+     *
+     * @param color the link color; null keeps the current color
+     */
     public void setLinkColor(Color color) {
         if (color != null) linkColor = color;
     }
 
+    /**
+     * Returns a copy of the heading-anchor map.
+     *
+     * @return map from anchor slug to document offset
+     */
     public Map<String, Integer> anchorOffsets() {
         return new HashMap<>(anchorOffsets);
     }
 
+    /**
+     * Clears all registered heading anchors. Used when the chat is cleared.
+     */
     public void clearAnchors() {
         LogManager.complete("clearAnchors()");
         anchorOffsets.clear();
     }
 
+    /**
+     * Renders a Markdown string into a document.
+     *
+     * <p>Resets list depth, list counters, anchors, and pending anchor state,
+     * then parses and visits the text. Empty input is skipped.</p>
+     *
+     * @param doc      the document to append to
+     * @param markdown the Markdown text to render; empty or null does nothing
+     */
     public void render(StyledDocument doc, String markdown) {
         if (markdown == null || markdown.isEmpty()) {
             LogManager.complete("render(): empty input, skip");
@@ -106,6 +160,17 @@ public class MarkdownRenderer extends AbstractVisitor {
     //  LLM omits it, so pipe blocks still parse as tables
     // ---------------------------------------------------------------
 
+    /**
+     * Inserts missing GFM delimiter rows into pipe tables.
+     *
+     * <p>LLM output often omits the delimiter row (the second header line).
+     * When a pipe line is followed by another pipe line that is not a delimiter
+     * row, a delimiter row is generated so commonmark parses the block as a
+     * table instead of a paragraph.</p>
+     *
+     * @param markdown the raw Markdown text
+     * @return the text with repaired tables
+     */
     private String normalizeTables(String markdown) {
         String[] lines = markdown.split("\n", -1);
         List<String> out = new ArrayList<>();
@@ -150,11 +215,26 @@ public class MarkdownRenderer extends AbstractVisitor {
         return result;
     }
 
+    /**
+     * Checks whether a line looks like a pipe table line.
+     *
+     * @param line the line to check
+     * @return true when the trimmed line contains a pipe character
+     */
     private boolean isPipeLine(String line) {
         String t = line.trim();
         return t.contains("|");
     }
 
+    /**
+     * Checks whether a line is a GFM delimiter row.
+     *
+     * <p>A valid delimiter row has cells containing only dashes and colons, with
+     * at least one dash per cell.</p>
+     *
+     * @param line the line to check
+     * @return true when the line is a delimiter row
+     */
     private boolean isDelimiterRow(String line) {
         String t = line.trim();
         if (!t.contains("|")) return false;
@@ -176,6 +256,12 @@ public class MarkdownRenderer extends AbstractVisitor {
         return anyDash;
     }
 
+    /**
+     * Counts the cells in a header line.
+     *
+     * @param headerLine the header line
+     * @return the number of cells, at least 1
+     */
     private int columnCount(String headerLine) {
         String t = headerLine.trim();
         String[] parts = t.split("\\|", -1);
@@ -185,6 +271,15 @@ public class MarkdownRenderer extends AbstractVisitor {
         return Math.max(1, cols);
     }
 
+    /**
+     * Builds a GFM delimiter row for a header line.
+     *
+     * <p>Keeps the header's leading indentation and creates one " --- " cell
+     * per column.</p>
+     *
+     * @param headerLine the header line to match
+     * @return the generated delimiter row
+     */
     private String delimiterFor(String headerLine) {
         StringBuilder indent = new StringBuilder();
         int i = 0;
@@ -201,11 +296,21 @@ public class MarkdownRenderer extends AbstractVisitor {
     //  inline nodes
     // ---------------------------------------------------------------
 
+    /**
+     * Appends plain text to the document.
+     *
+     * @param text the text node
+     */
     @Override
     public void visit(Text text) {
         append(text.getLiteral());
     }
 
+    /**
+     * Appends inline code in a monospaced font.
+     *
+     * @param code the inline code node
+     */
     @Override
     public void visit(Code code) {
         SimpleAttributeSet saved = pushStyle();
@@ -214,6 +319,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         popStyle(saved);
     }
 
+    /**
+     * Appends emphasized text in italics.
+     *
+     * @param emphasis the emphasis node
+     */
     @Override
     public void visit(Emphasis emphasis) {
         SimpleAttributeSet saved = pushStyle();
@@ -222,6 +332,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         popStyle(saved);
     }
 
+    /**
+     * Appends strong emphasis text in bold.
+     *
+     * @param strongEmphasis the strong emphasis node
+     */
     @Override
     public void visit(StrongEmphasis strongEmphasis) {
         SimpleAttributeSet saved = pushStyle();
@@ -230,6 +345,12 @@ public class MarkdownRenderer extends AbstractVisitor {
         popStyle(saved);
     }
 
+    /**
+     * Appends a link in the link color with an underline, carrying the
+     * destination URL as the {@link #LINK_ATTR} attribute.
+     *
+     * @param link the link node
+     */
     @Override
     public void visit(Link link) {
         SimpleAttributeSet saved = pushStyle();
@@ -241,22 +362,47 @@ public class MarkdownRenderer extends AbstractVisitor {
         popStyle(saved);
     }
 
+    /**
+     * Renders images as a placeholder text since the chat panel cannot display
+     * them.
+     *
+     * @param image the image node
+     */
     @Override
     public void visit(Image image) {
         if (image.getTitle() != null) append("[" + image.getTitle() + "]");
         else if (image.getDestination() != null) append("[image]");
     }
 
+    /**
+     * Converts a soft line break to a newline.
+     *
+     * @param softLineBreak the soft line break node
+     */
     @Override
     public void visit(SoftLineBreak softLineBreak) {
         append("\n");
     }
 
+    /**
+     * Converts a hard line break to a newline.
+     *
+     * @param hardLineBreak the hard line break node
+     */
     @Override
     public void visit(HardLineBreak hardLineBreak) {
         append("\n");
     }
 
+    /**
+     * Handles inline HTML anchors and passes through all other inline HTML.
+     *
+     * <p>Open and close anchor tags are consumed and the anchor id is registered
+     * with the current document offset. Empty anchor pairs are handled here;
+     * block-level anchor pairs are handled in {@link #visit(HtmlBlock)}.</p>
+     *
+     * @param htmlInline the inline HTML node
+     */
     @Override
     public void visit(HtmlInline htmlInline) {
         String literal = htmlInline.getLiteral();
@@ -285,12 +431,23 @@ public class MarkdownRenderer extends AbstractVisitor {
     //  blocks
     // ---------------------------------------------------------------
 
+    /**
+     * Renders a paragraph followed by a blank line.
+     *
+     * @param paragraph the paragraph node
+     */
     @Override
     public void visit(Paragraph paragraph) {
         visitChildren(paragraph);
         append("\n");
     }
 
+    /**
+     * Renders a heading in bold with a scaled font size and registers an anchor
+     * for in-document links.
+     *
+     * @param heading the heading node
+     */
     @Override
     public void visit(Heading heading) {
         int start = doc.getLength();
@@ -310,6 +467,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         append("\n\n");
     }
 
+    /**
+     * Renders a bullet list, tracking the nesting depth.
+     *
+     * @param bulletList the bullet list node
+     */
     @Override
     public void visit(BulletList bulletList) {
         listDepth++;
@@ -318,6 +480,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         append("\n");
     }
 
+    /**
+     * Renders an ordered list, resetting the counter at the list's depth.
+     *
+     * @param orderedList the ordered list node
+     */
     @Override
     public void visit(OrderedList orderedList) {
         listDepth++;
@@ -327,6 +494,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         append("\n");
     }
 
+    /**
+     * Renders a list item with an indentation prefix and a bullet or number.
+     *
+     * @param listItem the list item node
+     */
     @Override
     public void visit(ListItem listItem) {
         StringBuilder prefix = new StringBuilder();
@@ -341,6 +513,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         visitChildren(listItem);
     }
 
+    /**
+     * Renders a block quote in italics and a muted color.
+     *
+     * @param blockQuote the block quote node
+     */
     @Override
     public void visit(BlockQuote blockQuote) {
         SimpleAttributeSet saved = pushStyle();
@@ -350,21 +527,42 @@ public class MarkdownRenderer extends AbstractVisitor {
         popStyle(saved);
     }
 
+    /**
+     * Renders a fenced code block.
+     *
+     * @param fencedCodeBlock the fenced code block node
+     */
     @Override
     public void visit(FencedCodeBlock fencedCodeBlock) {
         codeBlock(fencedCodeBlock.getLiteral());
     }
 
+    /**
+     * Renders an indented code block.
+     *
+     * @param indentedCodeBlock the indented code block node
+     */
     @Override
     public void visit(IndentedCodeBlock indentedCodeBlock) {
         codeBlock(indentedCodeBlock.getLiteral());
     }
 
+    /**
+     * Renders a thematic break (horizontal rule) as a line of box-drawing
+     * characters.
+     *
+     * @param thematicBreak the thematic break node
+     */
     @Override
     public void visit(ThematicBreak thematicBreak) {
         append("â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€\n");
     }
 
+    /**
+     * Handles a block-level anchor pair and passes through all other HTML blocks.
+     *
+     * @param htmlBlock the HTML block node
+     */
     @Override
     public void visit(HtmlBlock htmlBlock) {
         String trimmed = htmlBlock.getLiteral().trim();
@@ -379,6 +577,11 @@ public class MarkdownRenderer extends AbstractVisitor {
         append("\n");
     }
 
+    /**
+     * Renders custom blocks; only GFM tables are supported here.
+     *
+     * @param customBlock the custom block node
+     */
     @Override
     public void visit(CustomBlock customBlock) {
         if (customBlock instanceof TableBlock table) {
@@ -386,6 +589,14 @@ public class MarkdownRenderer extends AbstractVisitor {
         }
     }
 
+    /**
+     * Renders a GFM table as a monospaced ASCII table.
+     *
+     * <p>Column widths are computed from the widest cell. The header row is
+     * bold; borders separate the header from the body.</p>
+     *
+     * @param table the table block node
+     */
     private void renderTable(TableBlock table) {
         List<List<String>> rows = new ArrayList<>();
         for (Node child = table.getFirstChild(); child != null; child = child.getNext()) {
@@ -431,6 +642,15 @@ public class MarkdownRenderer extends AbstractVisitor {
         popStyle(saved);
     }
 
+    /**
+     * Builds one ASCII table border line.
+     *
+     * @param left   the left border character
+     * @param mid    the column separator character
+     * @param right  the right border character
+     * @param widths the column widths
+     * @return the border line
+     */
     private String border(char left, char mid, char right, int[] widths) {
         StringBuilder sb = new StringBuilder().append(left);
         for (int i = 0; i < widths.length; i++) {
@@ -440,6 +660,14 @@ public class MarkdownRenderer extends AbstractVisitor {
         return sb.append(right).toString();
     }
 
+    /**
+     * Builds one padded table row line.
+     *
+     * @param row    the cell values of the row
+     * @param widths the target column widths
+     * @param cols   the total column count; missing cells are padded empty
+     * @return the row line
+     */
     private String rowLine(List<String> row, int[] widths, int cols) {
         StringBuilder sb = new StringBuilder("|");
         for (int i = 0; i < cols; i++) {
@@ -455,7 +683,13 @@ public class MarkdownRenderer extends AbstractVisitor {
     //  helpers
     // ---------------------------------------------------------------
 
-private void codeBlock(String literal) {
+/**
+     * Appends a code block in a monospaced font, marked with the
+     * {@link #CODE_BLOCK_ATTR} attribute for highlight painting.
+     *
+     * @param literal the code block content
+     */
+    private void codeBlock(String literal) {
         append("\n");
         SimpleAttributeSet saved = pushStyle();
         StyleConstants.setFontFamily(currentStyle, Font.MONOSPACED);
@@ -468,16 +702,39 @@ private void codeBlock(String literal) {
         append("\n\n");
     }
 
+    /**
+     * Computes the font size for a heading level.
+     *
+     * <p>Lower levels (closer to level 1) get larger sizes.</p>
+     *
+     * @param level the heading level, 1 to 6
+     * @return the font size in points
+     */
     private int headingSize(int level) {
         return Math.max(baseFontSize, baseFontSize + (6 - level) * 2);
     }
 
+    /**
+     * Extracts the plain text of a table cell.
+     *
+     * @param cell the table cell node
+     * @return the trimmed cell text
+     */
     private String cellText(TableCell cell) {
         StringBuilder sb = new StringBuilder();
         collectText(cell, sb);
         return sb.toString().trim();
     }
 
+    /**
+     * Collects plain text from a node's children.
+     *
+     * <p>Text and inline code literals are appended; soft line breaks become
+     * spaces. All other node types are descended into recursively.</p>
+     *
+     * @param node the node to traverse
+     * @param sb   the buffer to append to
+     */
     private void collectText(Node node, StringBuilder sb) {
         for (Node child = node.getFirstChild(); child != null; child = child.getNext()) {
             switch (child) {
@@ -489,6 +746,12 @@ private void codeBlock(String literal) {
         }
     }
 
+    /**
+     * Extracts the plain text of a heading, with any inline HTML stripped.
+     *
+     * @param heading the heading node
+     * @return the trimmed heading text without HTML tags
+     */
     private String headingText(Node heading) {
         StringBuilder sb = new StringBuilder();
         collectText(heading, sb);
@@ -496,16 +759,31 @@ private void codeBlock(String literal) {
         return text.trim();
     }
 
+    /**
+     * Saves the current style and starts a new style derived from it.
+     *
+     * @return the previous style, to be restored with {@link #popStyle}
+     */
     private SimpleAttributeSet pushStyle() {
         SimpleAttributeSet saved = currentStyle;
         currentStyle = new SimpleAttributeSet(saved);
         return saved;
     }
 
+    /**
+     * Restores the style saved by {@link #pushStyle}.
+     *
+     * @param saved the previously saved style
+     */
     private void popStyle(SimpleAttributeSet saved) {
         currentStyle = saved;
     }
 
+    /**
+     * Inserts text at the end of the document with the current style.
+     *
+     * @param text the text to append; empty or null does nothing
+     */
     private void append(String text) {
         if (text == null || text.isEmpty()) return;
         try {

@@ -11,7 +11,29 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Adds the "Send to POC Chat" entry to the right-click menu in the Repeater tool.
+ *
+ * <p>The menu item copies the displayed request into the chat input box and
+ * stores the request's {@link HttpService} in {@link MyExtension#lastRepeaterService}.
+ * The stored service is later used by
+ * {@link MyExtension#sendSelectionToRepeater} to set the target on requests
+ * sent back to Repeater from the chat panel.</p>
+ *
+ * <p>Keep the stored service sticky across menu invocations: each "Send to POC
+ * Chat" click overwrites the previous value, and the value stays until the next
+ * click.</p>
+ */
 public class RepeaterContextMenuProvider implements ContextMenuItemsProvider {
+    /**
+     * Builds the context-menu items for a right-click event.
+     *
+     * <p>Shows "Send to POC Chat" only when the event comes from the Repeater
+     * tool and a request text is available.</p>
+     *
+     * @param event the context-menu event from Burp
+     * @return the menu items to show; empty when the menu should not appear
+     */
     @Override
     public List<Component> provideMenuItems(ContextMenuEvent event) {
         List<Component> items = new ArrayList<>();
@@ -45,16 +67,40 @@ public class RepeaterContextMenuProvider implements ContextMenuItemsProvider {
         return items;
     }
 
+    /**
+     * Pairs a request's text with its original {@link HttpService}.
+     *
+     * @param requestText the request text to copy into the chat input box
+     * @param service     the request's service; may be null
+     */
     private static class RequestAndService {
+        /** The request text to copy into the chat input box. */
         final String requestText;
+        /** The request's service; may be null. */
         final HttpService service;
 
+        /**
+         * Creates a request/service pair.
+         *
+         * @param requestText the request text
+         * @param service     the request's service; may be null
+         */
         RequestAndService(String requestText, HttpService service) {
             this.requestText = requestText;
             this.service = service;
         }
     }
 
+    /**
+     * Extracts the request text and its service from a context-menu event.
+     *
+     * <p>Reads the request shown in the message editor first. When the event has
+     * no message editor (for example a table selection), falls back to the first
+     * selected request.</p>
+     *
+     * @param event the context-menu event from Burp
+     * @return the request/service pair, or null when no request is available
+     */
     private RequestAndService getRequestAndService(ContextMenuEvent event) {
         Optional<?> msgOpt = event.messageEditorRequestResponse();
         if (msgOpt.isPresent()) {
