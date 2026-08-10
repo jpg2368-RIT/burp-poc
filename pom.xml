@@ -17,7 +17,7 @@
         <dependency>
             <groupId>net.portswigger.burp.extensions</groupId>
             <artifactId>montoya-api</artifactId>
-            <version>LATEST</version>
+            <version>2026.4</version>
         </dependency>
         <dependency>
             <groupId>org.commonmark</groupId>
@@ -45,4 +45,36 @@
             <version>0.12.0</version>
         </dependency>
     </dependencies>
+    <build>
+        <finalName>burp-poc</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>

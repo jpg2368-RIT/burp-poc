@@ -45,21 +45,12 @@ public class MyExtension implements BurpExtension {
 
     @Override
     public void initialize(MontoyaApi api) {
-        MAPI.initialize(api);
         LogManager.initialize(api);
 
         api.extension().setName("Burp Suite POC Extension");
         LogManager.log("Extension successfully loaded. Log level: " + LogManager.levelName());
 
-        String hash = "";
-        if (api.persistence().preferences().stringKeys().contains("hash")) {
-            hash = api.persistence().preferences().getString("hash");
-        }
-
-        MyHttpHandler handler = new MyHttpHandler(hash);
-        api.http().registerHttpHandler(handler);
-
-        api.extension().registerUnloadingHandler(new UnloadingHandler(handler));
+        api.extension().registerUnloadingHandler(LogManager::close);
 
         // make settings tab
         JPanel extPanel = new JPanel(new GridBagLayout());
