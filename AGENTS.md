@@ -77,7 +77,9 @@ named package is a suggested future cleanup.
 - Repeater target resolution (`MyExtension.sendSelectionToRepeater`): use the
   service captured from Repeater first; otherwise parse the `Host:` header from
   the selection; otherwise send without an explicit target. Log which source
-  was used.
+  was used. Normalize chat text (trim per-line trailing whitespace) and strip
+  stray CR/LF from the parsed method, path, and header values before sending,
+  so Burp does not flag the request as an HTTP/2 "kettled" request.
 - Streaming: accumulate deltas, re-render the full buffer on each delta, run
   network work off the UI thread, and update Swing components via
   `SwingUtilities.invokeLater`.

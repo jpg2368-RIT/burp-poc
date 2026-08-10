@@ -997,6 +997,12 @@ public class MyExtension implements BurpExtension {
      *   <li>Otherwise send the request without an explicit target.</li>
      * </ol>
      *
+     * <p>Before parsing, the selection is normalized (trailing spaces per line
+     * removed) because chat text often comes from model output. After parsing,
+     * stray CR/LF characters are stripped from the method, path, and header
+     * values, so Burp does not flag the request as an HTTP/2 "kettled" request
+     * in the new Repeater tab.</p>
+     *
      * @param chatPane the chat text pane, used for error messages
      * @param api      the Montoya API instance
      * @param selected the selected text to parse
@@ -1004,7 +1010,7 @@ public class MyExtension implements BurpExtension {
     private void sendSelectionToRepeater(JTextPane chatPane, MontoyaApi api, String selected) {
         if (selected == null) return;
 
-        String cleaned = stripCodeFences(selected);
+        String cleaned = normalizeRequestText(stripCodeFences(selected));
         LogManager.debug("sendSelectionToRepeater: " + cleaned.length() + " chars, tab=\"" + repeaterTabCaption() + "\"");
         try {
             burp.api.montoya.http.message.requests.HttpRequest request =
@@ -1035,11 +1041,77 @@ public class MyExtension implements BurpExtension {
                 LogManager.log("sendSelectionToRepeater: no target available (no captured service and no Host header in selection); sending without explicit target");
             }
 
+            request = sanitizeRequestForRepeater(request);
+
             api.repeater().sendToRepeater(request, repeaterTabCaption());
         } catch (IllegalArgumentException ex) {
             LogManager.error("sendSelectionToRepeater: " + ex.getMessage());
             appendChatMessage(chatPane, "System", "Invalid HTTP request selected: " + ex.getMessage());
         }
+    }
+
+    /**
+     * Removes CR and LF characters from the method, path, and header values of
+     * a request, so Burp can display it without flagging it as an HTTP/2
+     * "kettled" request.
+     *
+     * <p>Chat text often comes from model output, which may contain stray line
+     * endings inside what should be a single path or header value. Burp cannot
+     * represent a newline inside an HTTP/2 pseudo-header value in HTTP/1
+     * syntax, so it marks such requests as kettled in the Repeater tab. This
+     * step strips the stray characters while preserving the rest of the
+     * request. Each changed part is logged at DEBUG level.</p>
+     *
+     * @param request the request to sanitize
+     * @return the sanitized request; unchanged when no CR/LF is present
+     */
+    private burp.api.montoya.http.message.requests.HttpRequest sanitizeRequestForRepeater(
+            burp.api.montoya.http.message.requests.HttpRequest request) {
+        List<burp.api.montoya.http.message.HttpHeader> sanitizedHeaders = new ArrayList<>();
+        boolean changed = false;
+        for (burp.api.montoya.http.message.HttpHeader header : request.headers()) {
+            String value = header.value();
+            String cleanValue = stripCrLf(value);
+            if (value != null && !cleanValue.equals(value)) {
+                sanitizedHeaders.add(burp.api.montoya.http.message.HttpHeader.httpHeader(header.name(), cleanValue));
+                changed = true;
+                LogManager.debug("sendSelectionToRepeater: stripped CR/LF from header " + header.name());
+            } else {
+                sanitizedHeaders.add(header);
+            }
+        }
+
+        String path = request.path();
+        String cleanPath = stripCrLf(path);
+        if (path != null && !cleanPath.equals(path)) {
+            request = request.withPath(cleanPath);
+            changed = true;
+            LogManager.debug("sendSelectionToRepeater: stripped CR/LF from request path");
+        }
+
+        String method = request.method();
+        String cleanMethod = stripCrLf(method);
+        if (method != null && !cleanMethod.equals(method)) {
+            request = request.withMethod(cleanMethod);
+            changed = true;
+            LogManager.debug("sendSelectionToRepeater: stripped CR/LF from request method");
+        }
+
+        if (changed) {
+            request = request.withUpdatedHeaders(sanitizedHeaders);
+        }
+        return request;
+    }
+
+    /**
+     * Removes all CR and LF characters from a string.
+     *
+     * @param s the string to clean; may be null
+     * @return the string without CR/LF characters, or null when null
+     */
+    private String stripCrLf(String s) {
+        if (s == null) return null;
+        return s.replace("\r", "").replace("\n", "");
     }
 
     /** Matches a {@code Host:} header line and captures its value. */
@@ -1150,6 +1222,22 @@ public class MyExtension implements BurpExtension {
             s = lastNewline >= 0 ? s.substring(0, lastNewline) : "";
         }
         return s.trim();
+    }
+
+    /**
+     * Removes trailing spaces and tabs from every line of a request text.
+     *
+     * <p>Model output often leaves trailing whitespace on the request line and
+     * headers. The whitespace is harmless for what the user sees but can make
+     * {@link burp.api.montoya.http.message.requests.HttpRequest} parsing
+     * produce a request that Burp then flags as kettled. Stripping it before
+     * parsing keeps the parsed request clean.</p>
+     *
+     * @param text the request text to normalize
+     * @return the text with trailing per-line whitespace removed
+     */
+    private String normalizeRequestText(String text) {
+        return text.replaceAll("(?m)[ \\t]+$", "");
     }
 
     /**
